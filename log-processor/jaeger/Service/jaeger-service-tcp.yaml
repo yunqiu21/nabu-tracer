@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger-service-tcp
+  labels:
+    app: jaeger
+  annotations:
+    cloud.google.com/neg: '{"ingress":true}'
+spec:
+  selector:
+    app: jaeger
+  type: LoadBalancer
+  externalTrafficPolicy: Cluster
+  ipFamilyPolicy: SingleStack
+  allocateLoadBalancerNodePorts: true
+  ports:
+  - name: 5778-to-5778-tcp
+    port: 5778
+    targetPort: 5778
+    protocol: TCP
+  - name: 16686-to-16686-tcp
+    port: 16686
+    targetPort: 16686
+    protocol: TCP
+  - name: 14250-to-14250-tcp
+    port: 14250
+    targetPort: 14250
+    protocol: TCP
+  - name: 14268-to-14268-tcp
+    port: 14268
+    targetPort: 14268
+    protocol: TCP
+  - name: 14269-to-14269-tcp
+    port: 14269
+    targetPort: 14269
+    protocol: TCP
+  - name: 4317-to-4317-tcp
+    port: 4317
+    targetPort: 4317
+    protocol: TCP
+  - name: 4318-to-4318-tcp
+    port: 4318
+    targetPort: 4318
+    protocol: TCP
+  - name: 9411-to-9411-tcp
+    port: 9411
+    targetPort: 9411
+    protocol: TCP
