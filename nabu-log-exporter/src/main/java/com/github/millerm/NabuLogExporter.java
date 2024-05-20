@@ -16,9 +16,9 @@ import java.nio.file.Path;
 public class NabuLogExporter implements LogExporter {
     private static final Logger LOG = Logger.getGlobal();
 
-    private static final int SLEEP_TIME_MILLISECONDS = 10_000;
+    private static final int SLEEP_TIME_MILLISECONDS = 5000;
 
-    private static final int MAX_BUFFER_SIZE_BYTES = 1024;
+    private static final int MAX_BUFFER_SIZE_BYTES = 100;
 
     private Path logFilePath;
 
@@ -39,6 +39,7 @@ public class NabuLogExporter implements LogExporter {
     }
 
     public void updateLogPosition(int updatedLogPosition) {
+        LOG.info("Updated log position: " + updatedLogPosition);
         this.logPosition = updatedLogPosition;
     }
 
@@ -49,13 +50,15 @@ public class NabuLogExporter implements LogExporter {
         while (true) {
             readLogs();
             exportLogs();
+            writeState();
             Thread.sleep(SLEEP_TIME_MILLISECONDS);
         }
     }
 
     @Override
     public void readLogs() {
-        LOG.info("Reading new logs from " + getLogFilePath() + "...");
+        LOG.info("Reading logs from " + getLogFilePath() + "...");
+        LOG.info("Log position: " + getLogPosition());
 
         File logFile = new File(getLogFilePath());
 
@@ -65,9 +68,11 @@ public class NabuLogExporter implements LogExporter {
         }
 
         try (FileChannel channel = new FileInputStream(getLogFilePath()).getChannel()) {
-            try (FileLock lock = channel.lock(0, Long.MAX_VALUE, true)) {
+            try (FileLock lock = channel.lock(getLogPosition(), MAX_BUFFER_SIZE_BYTES, true)) {
                 java.nio.ByteBuffer buff = java.nio.ByteBuffer.allocate(MAX_BUFFER_SIZE_BYTES);
                 StringBuilder logContent = new StringBuilder();
+
+                channel.position(getLogPosition());
 
                 while (channel.read(buff) > 0) {
                     // See:
@@ -75,13 +80,17 @@ public class NabuLogExporter implements LogExporter {
                     buff.flip();
 
                     while (buff.hasRemaining()) {
+                        LOG.info("buffer position: " + buff.position());
+                        LOG.info("buffer limit: " + buff.limit());
                         logContent.append((char) buff.get());
                     }
 
+                    updateLogPosition(buff.position());
                     buff.clear();
+                    LOG.info("Log content: " + logContent.toString());
+                    logContent.setLength(0);
                 }
 
-                LOG.info("Log content: " + logContent.toString());
             } catch (Exception e) {
                 System.err.println("Error acquiring lock: " + e.getMessage());
                 e.printStackTrace();
@@ -99,12 +108,7 @@ public class NabuLogExporter implements LogExporter {
         LOG.info("Exporting logs...");
     }
 
-    @Override
-    public void writeState() {
-        LOG.info("Not implmeneted!");
-    }
-
-    public void writeState(int updatedLogPosition) throws IOException {
+    public void writeState() throws IOException {
         LOG.info("Writing state...");
 
         try (RandomAccessFile stateFile = new RandomAccessFile(this.stateFilePath.toString(), "rw");
@@ -112,7 +116,7 @@ public class NabuLogExporter implements LogExporter {
 
             MappedByteBuffer buffer = stateFileChannel.map(FileChannel.MapMode.READ_WRITE, 0, Integer.MAX_VALUE);
 
-            buffer.putInt(updatedLogPosition);
+            buffer.putInt(getLogPosition());
 
             System.out.println("Wrote state: " + getLogPosition());
         }
@@ -127,7 +131,7 @@ public class NabuLogExporter implements LogExporter {
         if (!stateFile.exists()) {
             LOG.info("No state exists. Creating...");
             stateFile.createNewFile();
-            writeState(0);
+            writeState();
 
             return;
         }
@@ -147,6 +151,7 @@ public class NabuLogExporter implements LogExporter {
     }
 
     public NabuLogExporter(String logPath) {
+        this.logPosition = 0;
         this.logFilePath = Path.of(logPath);
 
         try {
@@ -157,6 +162,7 @@ public class NabuLogExporter implements LogExporter {
     }
 
     public NabuLogExporter() {
+        this.logPosition = 0;
         this.logFilePath = Path.of(System.getenv("NABU_TRACING_LOG_PATH"));
         this.stateFilePath = Path.of(System.getenv("LOG_EXPORTER_STATE_PATH"));
 
