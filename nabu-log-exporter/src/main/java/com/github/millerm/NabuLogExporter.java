@@ -8,15 +8,17 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
-import java.nio.channels.FileLock;
 import java.nio.file.Path;
 
 public class NabuLogExporter implements LogExporter {
     private static final Logger LOG = Logger.getGlobal();
 
-    private static final int SLEEP_TIME_MILLISECONDS = 5000;
+    private LogIterator logIterator;
+
+    private static final int SLEEP_TIME_MILLISECONDS = 1000;
 
     private static final int MAX_BUFFER_SIZE_BYTES = 100;
 
@@ -49,7 +51,6 @@ public class NabuLogExporter implements LogExporter {
 
         while (true) {
             readLogs();
-            exportLogs();
             writeState();
             Thread.sleep(SLEEP_TIME_MILLISECONDS);
         }
@@ -57,49 +58,24 @@ public class NabuLogExporter implements LogExporter {
 
     @Override
     public void readLogs() {
-        LOG.info("Reading logs from " + getLogFilePath() + "...");
-        LOG.info("Log position: " + getLogPosition());
-
         File logFile = new File(getLogFilePath());
+        StringBuilder logContent = new StringBuilder();
 
         if (!logFile.exists()) {
             LOG.info("No log file exists...");
             return;
         }
 
-        try (FileChannel channel = new FileInputStream(getLogFilePath()).getChannel()) {
-            try (FileLock lock = channel.lock(getLogPosition(), MAX_BUFFER_SIZE_BYTES, true)) {
-                java.nio.ByteBuffer buff = java.nio.ByteBuffer.allocate(MAX_BUFFER_SIZE_BYTES);
-                StringBuilder logContent = new StringBuilder();
-
-                channel.position(getLogPosition());
-
-                while (channel.read(buff) > 0) {
-                    // See:
-                    // https://docs.oracle.com/javase%2F9%2Fdocs%2Fapi%2F%2F/java/nio/ByteBuffer.html#flip--
-                    buff.flip();
-
-                    while (buff.hasRemaining()) {
-                        LOG.info("buffer position: " + buff.position());
-                        LOG.info("buffer limit: " + buff.limit());
-                        logContent.append((char) buff.get());
-                    }
-
-                    updateLogPosition(buff.position());
-                    buff.clear();
-                    LOG.info("Log content: " + logContent.toString());
-                    logContent.setLength(0);
-                }
-
-            } catch (Exception e) {
-                System.err.println("Error acquiring lock: " + e.getMessage());
-                e.printStackTrace();
-                return;
+        for (ByteBuffer buffer : this.logIterator) {
+            while (buffer.hasRemaining()) {
+                logContent.append((char) buffer.get());
             }
-        } catch (Exception e) {
-            System.err.println("Error opening file: " + e.getMessage());
-            e.printStackTrace();
-            return;
+
+            updateLogPosition(getLogPosition() + logContent.length());
+
+            LOG.info(logContent.toString());
+
+            logContent.setLength(0);
         }
     }
 
@@ -114,9 +90,11 @@ public class NabuLogExporter implements LogExporter {
         try (RandomAccessFile stateFile = new RandomAccessFile(this.stateFilePath.toString(), "rw");
                 FileChannel stateFileChannel = stateFile.getChannel()) {
 
-            MappedByteBuffer buffer = stateFileChannel.map(FileChannel.MapMode.READ_WRITE, 0, Integer.MAX_VALUE);
+            stateFile.setLength(0);
+            MappedByteBuffer buffer = stateFileChannel.map(FileChannel.MapMode.READ_WRITE, 0, Integer.BYTES);
 
             buffer.putInt(getLogPosition());
+            stateFile.close();
 
             System.out.println("Wrote state: " + getLogPosition());
         }
@@ -159,6 +137,8 @@ public class NabuLogExporter implements LogExporter {
         } catch (IOException e) {
             e.printStackTrace();
         }
+
+        this.logIterator = LogIterator.getInstance(getLogFilePath(), MAX_BUFFER_SIZE_BYTES, getLogPosition());
     }
 
     public NabuLogExporter() {
@@ -171,6 +151,8 @@ public class NabuLogExporter implements LogExporter {
         } catch (IOException e) {
             e.printStackTrace();
         }
+
+        this.logIterator = LogIterator.getInstance(getLogFilePath(), MAX_BUFFER_SIZE_BYTES, getLogPosition());
     }
 
     public static void main(String[] args) {
