@@ -1,0 +1,51 @@
+
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "haorui-test"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "manual-test"
+          },
+          "spans": [
+            {
+              "traceId": "66675b6fe85982c7c8995ea3d9c95df4",
+              "spanId": "66675d03fa8be065",
+              "startTimeUnixNano": "1716514651000000000",
+              "endTimeUnixNano": "1716514654000000000",
+              "name": "span 1",
+              "kind": 2
+            },
+            {
+              "traceId": "66675b6fe85982c7c8995ea3d9c95df4",
+              "spanId": "66675d03fa8be066",
+              "parentSpanId": "66675d03fa8be065",
+              "startTimeUnixNano": "1716514652000000000",
+              "endTimeUnixNano": "1716514653000000000",
+              "name": "span 1-1",
+              "kind": 2
+            },
+            {
+              "traceId": "66675b6fe85982c7c8995ea3d9c95df4",
+              "spanId": "66675d03fa8be068",
+              "startTimeUnixNano": "1716514655000000000",
+              "endTimeUnixNano": "1716514656000000000",
+              "name": "span 2",
+              "kind": 2
+            }
+          ]
+        }
+      ]
+    }
+  ]
+ }
