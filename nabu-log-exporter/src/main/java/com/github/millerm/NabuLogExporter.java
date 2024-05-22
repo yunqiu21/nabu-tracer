@@ -31,8 +31,6 @@ public class NabuLogExporter implements LogExporter {
 
     private Path stateFilePath;
 
-    private int logPosition;
-
     private final ExecutorService executorService;
 
     public String getLogFilePath() {
@@ -41,15 +39,6 @@ public class NabuLogExporter implements LogExporter {
 
     public String getStateFilePath() {
         return stateFilePath.toString();
-    }
-
-    public int getLogPosition() {
-        return logPosition;
-    }
-
-    public void updateLogPosition(int updatedLogPosition) {
-        LOG.info("Updated log position: " + updatedLogPosition);
-        this.logPosition = updatedLogPosition;
     }
 
     @Override
@@ -195,13 +184,11 @@ public class NabuLogExporter implements LogExporter {
     }
 
     public NabuLogExporter(String logPath) {
-        this.logPosition = 0;
         this.LOG_PATH_DIR = Path.of(logPath);
         this.executorService = Executors.newCachedThreadPool();
     }
 
     public NabuLogExporter() {
-        this.logPosition = 0;
         this.LOG_PATH_DIR = Path.of(System.getenv("NABU_TRACING_LOG_PATH"));
         this.stateFilePath = Path.of(System.getenv("LOG_EXPORTER_STATE_PATH"));
         this.executorService = Executors.newCachedThreadPool();
