@@ -1,35 +1,42 @@
 package com.github.millerm;
 
-import java.util.logging.Logger;
-import java.util.logging.Level;
-import java.io.BufferedInputStream;
-import java.io.DataInputStream;
-import java.io.File;
-import java.io.FileInputStream;
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.nio.ByteBuffer;
-import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
+
+import java.nio.file.DirectoryStream;
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.StandardWatchEventKinds;
+import java.nio.file.WatchEvent;
+import java.nio.file.WatchKey;
+import java.nio.file.WatchService;
+
+import java.util.logging.Logger;
+import java.util.logging.Level;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class NabuLogExporter implements LogExporter {
     private static final Logger LOG = Logger.getGlobal();
 
-    private LogIterator logIterator;
+    private static final int SLEEP_TIME_MILLISECONDS = 1;
 
-    private static final int SLEEP_TIME_MILLISECONDS = 1000;
+    private static final int MAX_LOG_FILE_SIZE = 200 * 1024 * 1024;
 
-    private static final int MAX_BUFFER_SIZE_BYTES = 100;
-
-    private Path logFilePath;
+    private final Path LOG_PATH_DIR;
 
     private Path stateFilePath;
 
     private int logPosition;
 
+    private final ExecutorService executorService;
+
     public String getLogFilePath() {
-        return logFilePath.toString();
+        return LOG_PATH_DIR.toString();
     }
 
     public String getStateFilePath() {
@@ -50,109 +57,154 @@ public class NabuLogExporter implements LogExporter {
         LOG.info("Starting NabuLogExporter...");
 
         while (true) {
-            readLogs();
-            writeState();
-            Thread.sleep(SLEEP_TIME_MILLISECONDS);
+            processLogs();
         }
     }
 
     @Override
-    public void readLogs() {
-        File logFile = new File(getLogFilePath());
-        StringBuilder logContent = new StringBuilder();
+    public void exportLogs(String log) {
+        LOG.info("Exporting log: " + log);
+    }
 
-        if (!logFile.exists()) {
-            LOG.info("No log file exists...");
-            return;
-        }
+    @Override
+    public void processLogs() {
+        // First check for existing files in the log directory. We consider log files
+        // that are too big to be already processed.
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(LOG_PATH_DIR)) {
+            LOG.info("Checking for existing files in log path: " + LOG_PATH_DIR);
 
-        for (ByteBuffer buffer : this.logIterator) {
-            while (buffer.hasRemaining()) {
-                logContent.append((char) buffer.get());
+            for (Path entry : stream) {
+                if (Files.isRegularFile(entry)) {
+                    if (Files.size(entry) < MAX_LOG_FILE_SIZE) {
+                        executorService.submit(new LogTask(entry, stateFilePath));
+                    }
+
+                }
             }
-
-            updateLogPosition(getLogPosition() + logContent.length());
-
-            LOG.info(logContent.toString());
-
-            logContent.setLength(0);
-        }
-    }
-
-    @Override
-    public void exportLogs() {
-        LOG.info("Exporting logs...");
-    }
-
-    public void writeState() throws IOException {
-        LOG.info("Writing state...");
-
-        try (RandomAccessFile stateFile = new RandomAccessFile(this.stateFilePath.toString(), "rw");
-                FileChannel stateFileChannel = stateFile.getChannel()) {
-
-            stateFile.setLength(0);
-            MappedByteBuffer buffer = stateFileChannel.map(FileChannel.MapMode.READ_WRITE, 0, Integer.BYTES);
-
-            buffer.putInt(getLogPosition());
-            stateFile.close();
-
-            System.out.println("Wrote state: " + getLogPosition());
-        }
-    }
-
-    @Override
-    public void readState() throws IOException {
-        LOG.info("Reading state...");
-
-        File stateFile = new File(this.stateFilePath.toString());
-
-        if (!stateFile.exists()) {
-            LOG.info("No state exists. Creating...");
-            stateFile.createNewFile();
-            writeState();
-
-            return;
-        }
-
-        try (
-                FileInputStream fileInputStream = new FileInputStream(this.stateFilePath.toString());
-                BufferedInputStream bufferedInputStream = new BufferedInputStream(fileInputStream);
-                DataInputStream dataInputStream = new DataInputStream(bufferedInputStream)) {
-
-            updateLogPosition(dataInputStream.readInt());
-
-            LOG.info("logPosition is: " + getLogPosition());
         } catch (IOException e) {
-            e.printStackTrace();
+            LOG.severe("Error reading existing files: " + e.getMessage());
         }
 
+        try (WatchService watchService = FileSystems.getDefault().newWatchService()) {
+            LOG_PATH_DIR.register(watchService, StandardWatchEventKinds.ENTRY_CREATE);
+
+            LOG.info("Watching for new log files at: " + LOG_PATH_DIR);
+
+            while (true) {
+                WatchKey key;
+                try {
+                    key = watchService.take();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    LOG.severe("Directory watching interrupted");
+                    return;
+                }
+
+                for (WatchEvent<?> event : key.pollEvents()) {
+                    WatchEvent.Kind<?> kind = event.kind();
+
+                    if (kind == StandardWatchEventKinds.OVERFLOW) {
+                        continue;
+                    }
+
+                    @SuppressWarnings("unchecked")
+                    WatchEvent<Path> ev = (WatchEvent<Path>) event;
+                    Path filename = ev.context();
+                    Path filePath = LOG_PATH_DIR.resolve(filename);
+
+                    if (kind == StandardWatchEventKinds.ENTRY_CREATE) {
+                        LOG.info("New file detected: " + filePath);
+                        executorService.submit(new LogTask(filePath, stateFilePath));
+                    }
+                }
+
+                boolean valid = key.reset();
+                if (!valid) {
+                    break;
+                }
+            }
+        } catch (IOException e) {
+            LOG.severe("Error watching directory: " + e.getMessage());
+        }
+    }
+
+    private static class LogTask implements Runnable {
+        private final Path filePath;
+        private final String stateFilePath;
+        long filePointer;
+
+        public LogTask(Path filePath, Path stateFilePath) {
+            this.filePath = filePath;
+            this.stateFilePath = stateFilePath.toString() + "/" + filePath.getFileName().toString();
+            this.filePointer = readState();
+        }
+
+        @Override
+        public void run() {
+            try (RandomAccessFile reader = new RandomAccessFile(filePath.toFile(), "r")) {
+                String line;
+
+                // Initially, set the reader to position read from state
+                reader.seek(filePointer);
+                while (true) {
+                    // NOTE(@millerm): Can switch to read() to read a specific amount
+                    // of bytes if necessary
+                    line = reader.readLine();
+
+                    if (line != null) {
+                        LOG.info("New log: " + line);
+                        saveState(reader.getFilePointer());
+                    } else {
+                        Thread.sleep(SLEEP_TIME_MILLISECONDS);
+                        reader.seek(reader.getFilePointer()); // Reset the file pointer to the current position
+                    }
+                }
+            } catch (IOException | InterruptedException e) {
+                LOG.severe("Error reading log file: " + e.getMessage());
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        private void saveState(long position) {
+            try (BufferedWriter writer = Files.newBufferedWriter(Path.of(stateFilePath), StandardOpenOption.CREATE,
+                    StandardOpenOption.TRUNCATE_EXISTING)) {
+                writer.write(Long.toString(position));
+                writer.flush();
+
+                LOG.info("Saved state at position: " + position);
+            } catch (IOException e) {
+                LOG.severe("Error saving state: " + e.getMessage());
+            }
+        }
+
+        private long readState() {
+            if (Files.exists(Path.of(stateFilePath))) {
+                try (BufferedReader reader = Files.newBufferedReader(Path.of(stateFilePath))) {
+                    String line = reader.readLine();
+
+                    if (line != null) {
+                        return Long.parseLong(line);
+                    }
+                } catch (IOException e) {
+                    LOG.severe("Error reading state: " + e.getMessage());
+                    return 0;
+                }
+            }
+            return 0;
+        }
     }
 
     public NabuLogExporter(String logPath) {
         this.logPosition = 0;
-        this.logFilePath = Path.of(logPath);
-
-        try {
-            this.readState();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-        this.logIterator = LogIterator.getInstance(getLogFilePath(), MAX_BUFFER_SIZE_BYTES, getLogPosition());
+        this.LOG_PATH_DIR = Path.of(logPath);
+        this.executorService = Executors.newCachedThreadPool();
     }
 
     public NabuLogExporter() {
         this.logPosition = 0;
-        this.logFilePath = Path.of(System.getenv("NABU_TRACING_LOG_PATH"));
+        this.LOG_PATH_DIR = Path.of(System.getenv("NABU_TRACING_LOG_PATH"));
         this.stateFilePath = Path.of(System.getenv("LOG_EXPORTER_STATE_PATH"));
-
-        try {
-            this.readState();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-        this.logIterator = LogIterator.getInstance(getLogFilePath(), MAX_BUFFER_SIZE_BYTES, getLogPosition());
+        this.executorService = Executors.newCachedThreadPool();
     }
 
     public static void main(String[] args) {
