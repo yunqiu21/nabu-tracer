@@ -4,7 +4,9 @@ import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.RandomAccessFile;
-
+import java.net.URI;
+import java.net.http.HttpRequest.BodyPublishers;
+import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.file.DirectoryStream;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -14,6 +16,10 @@ import java.nio.file.StandardWatchEventKinds;
 import java.nio.file.WatchEvent;
 import java.nio.file.WatchKey;
 import java.nio.file.WatchService;
+
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 
 import java.util.logging.Logger;
 import java.util.logging.Level;
@@ -57,8 +63,6 @@ public class NabuLogExporter implements LogExporter {
 
     @Override
     public void processLogs() {
-        // First check for existing files in the log directory. We consider log files
-        // that are too big to be already processed.
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(LOG_PATH_DIR)) {
             LOG.info("Checking for existing files in log path: " + LOG_PATH_DIR);
 
@@ -128,20 +132,72 @@ public class NabuLogExporter implements LogExporter {
             this.filePointer = readState();
         }
 
+        private static String parseLog(String line) {
+            String[] parts = line.split(" ", 7);
+
+            // TODO: better parse
+            return "{" +
+                    "\"traceId\":\"" + parts[0] + "\"," +
+                    "\"spanId\":\"" + parts[1] + "\"," +
+                    "\"operationName\":\"" + parts[5] + "\"," +
+                    "\"references\":[]," +
+                    "\"startTimeUnixNano\":\"" + "1716525641" + "\"," +
+                    "\"endTimeUnixNano\":\"" + "1716525642" + "\"," +
+                    "\"kind\":2" +
+                    "}";
+
+        }
+
+        private static void handleLog(String line) {
+            HttpClient client = HttpClient.newHttpClient();
+            URI uri = URI.create("http://localhost:4318/v1/traces");
+
+            StringBuilder spansArray = new StringBuilder();
+            spansArray.append("[");
+            String span = parseLog(line);
+            spansArray.append(span);
+            spansArray.append("]");
+
+            // Wrap the spans array in a root JSON object
+            String requestBody = "{\"resourceSpans\":[" +
+                    "{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"nabu-tracer-tester2\"}}]},"
+                    +
+                    "\"scopeSpans\":[{\"scope\":{\"name\":\"manual-test\"},\"spans\":"
+                    + spansArray.toString() + "}]}]}";
+
+            LOG.info("Sending " + requestBody);
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(uri)
+                    .header("Content-Type", "application/json")
+                    .POST(BodyPublishers.ofString(requestBody))
+                    .build();
+
+            try {
+                HttpResponse<String> response = client.send(request, BodyHandlers.ofString());
+                LOG.info("Response status code: " + response.statusCode());
+                LOG.info("Response body: " + response.body());
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+
         @Override
         public void run() {
             try (RandomAccessFile reader = new RandomAccessFile(filePath.toFile(), "r")) {
-                String line;
+                String logEntry;
 
                 // Initially, set the reader to position read from state
                 reader.seek(filePointer);
                 while (true) {
                     // NOTE(@millerm): Can switch to read() to read a specific amount
                     // of bytes if necessary
-                    line = reader.readLine();
+                    logEntry = reader.readLine();
 
-                    if (line != null) {
-                        LOG.info("New log: " + line);
+                    if (logEntry != null) {
+                        LOG.info("New log: " + logEntry);
+
+                        handleLog(logEntry);
                         saveState(reader.getFilePointer());
                     } else {
                         Thread.sleep(SLEEP_TIME_MILLISECONDS);
