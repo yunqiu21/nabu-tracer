@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IPFS HTTP Gateway Server</title>
+    <style>
+        .response-line {
+            max-height: 80px;
+            overflow-y: auto;
+            border: 1px solid #000;
+            margin-bottom: 5px;
+            padding: 2px;
+        }
+    </style>
+</head>
+<body>
+    <h1>IPFS HTTP Gateway Server</h1>
+    <textarea id="payload" placeholder="Enter payload for PUT request"></textarea>
+    <br><br>
+    <button onclick="sendGetRequest()">Send GET Request</button>
+    <button onclick="sendPutRequest()">Send PUT Request</button>
+    <br><br>
+    <div id="response"></div>
+
+    <script>
+        function sendGetRequest() {
+            fetch('/ipfs', {
+                method: 'GET',
+            })
+            .then(response => response.json())
+            .then(data => {
+                displayResponse(data);
+            })
+            .catch(error => {
+                document.getElementById('response').innerText = `Error: ${error}`;
+            });
+        }
+
+        function sendPutRequest() {
+            const payload = document.getElementById('payload').value;
+
+            fetch(`/ipfs`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'text/plain'
+                },
+                body: payload
+            })
+            .then(response => response.json())
+            .then(data => {
+                displayResponse(data);
+            })
+            .catch(error => {
+                document.getElementById('response').innerText = `Error: ${error}`;
+            });
+        }
+
+        function displayResponse(data) {
+            const responseElement = document.getElementById('response');
+            responseElement.innerHTML = `Status Code: ${data.status_code}<br>`;
+
+            if (Array.isArray(data.content)) {
+                const content = data.content.map(line => `<div class="response-line">${line}</div>`).join('');
+                responseElement.innerHTML += `Content:<br>${content}`;
+
+            } else { 
+                responseElement.innerHTML += `Content: ${data.content}`;
+            }
+        }
+    </script>
+</body>
+</html>
