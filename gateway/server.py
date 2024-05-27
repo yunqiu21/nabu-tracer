@@ -1,16 +1,13 @@
 from flask import Flask, request, jsonify, render_template
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
-# TODO: from kazoo.client import KazooClient
-from pymongo import MongoClient
 import random
+from google.cloud import firestore
 
 app = Flask(__name__)
 
-# TODO: Add Zookeeper functionality
-
-mongo_uri = '<hidden-for-pull-request>'
-client = MongoClient(mongo_uri)
-db = client['nabu']
+# Initialize Firestore client
+db = firestore.Client()
 
 # List of IPFS node addresses
 IPFS_URL = [
@@ -30,20 +27,29 @@ def index():
 # Forward GET request to IPFS peer to retrieve all content
 @app.route('/ipfs', methods=['GET'])
 def get_ipfs_content():
-    # Retrieve CIDs from database
-    cid_records = db['cid'].find()
-    cid_list = [record['cid'] for record in cid_records]
+    # Retrieve CIDs from Firestore
+    cid_records = db.collection('cid').stream()
+    cid_list = [record.to_dict()['cid'] for record in cid_records]
     # Sample CIDs for tracing
     nsamples = max(1, len(cid_list) // 10)
     traced = random.sample(range(len(cid_list)), nsamples)
 
     responses = []
 
-    for i, cid in enumerate(cid_list):
-        responses.append(send_single_get_request(cid, i in traced))
+    with ThreadPoolExecutor() as executor:
+        future_to_cid = {executor.submit(send_single_get_request, cid, i in traced): cid for i, cid in enumerate(cid_list)}
+        for future in as_completed(future_to_cid):
+            cid = future_to_cid[future]
+            try:
+                status, response = future.result()
+                if status != 200:
+                    responses.append({'error': response})
+                else:
+                    responses.append({'content': response})
+            except Exception as e:
+                responses.append({'error': str(e)})
 
-    # TODO: handle errors
-    return jsonify({"status_code": 200, "content": responses})
+    return jsonify({"content": responses})
 
 # Forward PUT request to IPFS peer
 @app.route('/ipfs', methods=['PUT'])
@@ -51,7 +57,7 @@ def put_ipfs_content():
     # TODO: use round-robin to choose the peer
     ipfs_node_idx = 0
     url = IPFS_URL[ipfs_node_idx] + PUT_ROUTE
-    # TODO: support other input format
+    # TODO: support other input formats
     payload = request.data.decode('utf-8')
 
     if not url:
@@ -59,33 +65,38 @@ def put_ipfs_content():
 
     try:
         response = requests.put(url, data=payload)
+        response.raise_for_status()
         cid = response.json().get('cid')
-        # Store CID to database
-        result = db['cid'].insert_one({'cid': cid})
+        if not cid:
+            return jsonify({'error': 'Failed to retrieve CID from response'}), 500
+
+        # Store CID to Firestore
+        db.collection('cid').add({'cid': cid})
 
         return jsonify({
-            'status_code': response.status_code,
             'content': cid
-        })
+        }), response.status_code
 
     except requests.RequestException as e:
         return jsonify({'error': str(e)}), 500
 
-def send_single_get_request(content, trace = False):
+def send_single_get_request(content, trace=False):
     ipfs_node_idx = 0
     url = IPFS_URL[ipfs_node_idx] + GET_ROUTE + f"?cid={content}"
     if trace:
         url += "&trace=1"
 
     if not url:
-        return 'URL is required'
+        return 400, 'URL is required'
 
     try:
         response = requests.get(url)
-        return response.text
+        response.raise_for_status()
+        # TODO: reply with bytestream instead of text
+        return response.status_code, response.text
 
     except requests.RequestException as e:
-        return str(e)
+        return e.response.status_code if e.response else 500, str(e)
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=80)
