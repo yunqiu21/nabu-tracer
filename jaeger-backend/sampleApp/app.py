@@ -7,6 +7,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 import argparse
+import time
 
 def main():
     parser = argparse.ArgumentParser()
@@ -25,7 +26,12 @@ def main():
     trace.set_tracer_provider(traceProvider)
     tracer = trace.get_tracer(__name__)
     with tracer.start_as_current_span(f"{args.span}"):
-        print("Hello world!")
+        wait_and_print("First inner function")
+        wait_and_print("Second inner function")
+    
+def wait_and_print(s: str):
+    time.sleep(1)
+    print(s)
 
 if __name__ == "__main__":
     main()

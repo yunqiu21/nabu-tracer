@@ -24,9 +24,9 @@ Nabu-Tracer will capture informative events occurring throughout the lifecycle o
 
 Captured event logs will be persistently stored to facilitate comprehensive analysis. Ensuring the durability of these logs is essential for post-mortem investigations and performance optimizations.
 
-### 4. Trace Visualization
+### 4. Trace Analytics
 
-To provide actionable insights, Nabu-Tracer will feature a user-friendly interface for visualizing traces as spans. Basic search and data analysis capabilities will empower users to identify patterns, anomalies, and potential bottlenecks within the P2P network.
+To provide actionable insights, Nabu-Tracer will feature a user-friendly interface for visualizing traces as spans. Basic search and data analysis capabilities will empower users to identify patterns, anomalies, and potential bottlenecks within the P2P network. Nabu-Tracer uses [Jaeger](https://www.jaegertracing.io/), an open-source trace collector and span query engine, to priode such analytics capability.
 
 <!-- TODO: add installation and usage guides -->
 
