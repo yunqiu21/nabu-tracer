@@ -29,22 +29,22 @@ import java.util.concurrent.Executors;
 public class NabuLogExporter implements LogExporter {
     private static final Logger LOG = Logger.getGlobal();
 
-    private static final int SLEEP_TIME_MILLISECONDS = 1;
+    private static final int LOG_EXPORT_POLL_DELAY_MILLISECONDS = 1;
 
     private static final int MAX_LOG_FILE_SIZE = 200 * 1024 * 1024;
 
-    private final Path LOG_PATH_DIR;
+    private final Path logPathDir;
 
-    private Path stateFilePath;
+    private Path stateDirPath;
 
     private final ExecutorService executorService;
 
     public String getLogFilePath() {
-        return LOG_PATH_DIR.toString();
+        return logPathDir.toString();
     }
 
-    public String getStateFilePath() {
-        return stateFilePath.toString();
+    public String getstateDirPath() {
+        return stateDirPath.toString();
     }
 
     @Override
@@ -63,13 +63,13 @@ public class NabuLogExporter implements LogExporter {
 
     @Override
     public void processLogs() {
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(LOG_PATH_DIR)) {
-            LOG.info("Checking for existing files in log path: " + LOG_PATH_DIR);
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(logPathDir)) {
+            LOG.info("Checking for existing files in log path: " + logPathDir);
 
             for (Path entry : stream) {
                 if (Files.isRegularFile(entry)) {
                     if (Files.size(entry) < MAX_LOG_FILE_SIZE) {
-                        executorService.submit(new LogTask(entry, stateFilePath));
+                        executorService.submit(new LogTask(entry, stateDirPath));
                     }
 
                 }
@@ -79,9 +79,9 @@ public class NabuLogExporter implements LogExporter {
         }
 
         try (WatchService watchService = FileSystems.getDefault().newWatchService()) {
-            LOG_PATH_DIR.register(watchService, StandardWatchEventKinds.ENTRY_CREATE);
+            logPathDir.register(watchService, StandardWatchEventKinds.ENTRY_CREATE);
 
-            LOG.info("Watching for new log files at: " + LOG_PATH_DIR);
+            LOG.info("Watching for new log files at: " + logPathDir);
 
             while (true) {
                 WatchKey key;
@@ -103,11 +103,11 @@ public class NabuLogExporter implements LogExporter {
                     @SuppressWarnings("unchecked")
                     WatchEvent<Path> ev = (WatchEvent<Path>) event;
                     Path filename = ev.context();
-                    Path filePath = LOG_PATH_DIR.resolve(filename);
+                    Path filePath = logPathDir.resolve(filename);
 
                     if (kind == StandardWatchEventKinds.ENTRY_CREATE) {
                         LOG.info("New file detected: " + filePath);
-                        executorService.submit(new LogTask(filePath, stateFilePath));
+                        executorService.submit(new LogTask(filePath, stateDirPath));
                     }
                 }
 
@@ -123,19 +123,28 @@ public class NabuLogExporter implements LogExporter {
 
     private static class LogTask implements Runnable {
         private final Path filePath;
-        private final String stateFilePath;
+        private final String stateDirPath;
+        private State state;
         long filePointer;
 
-        public LogTask(Path filePath, Path stateFilePath) {
+        public LogTask(Path filePath, Path stateDirPath) {
             this.filePath = filePath;
-            this.stateFilePath = stateFilePath.toString() + "/" + filePath.getFileName().toString();
-            this.filePointer = readState();
+
+            this.stateDirPath = stateDirPath.toString() + "/" + filePath.getFileName().toString();
+            try {
+                state = new State(this.stateDirPath);
+                this.filePointer = readState();
+            } catch (IOException e) {
+                LOG.severe("Error reading log file: " + e.getMessage());
+                state.close();
+                Thread.currentThread().interrupt();
+            }
         }
 
         private static String parseLog(String line) {
             String[] parts = line.split(" ", 7);
 
-            // TODO: better parse
+            // TODO(@millerm): better parse
             return "{" +
                     "\"traceId\":\"" + parts[0] + "\"," +
                     "\"spanId\":\"" + parts[1] + "\"," +
@@ -185,6 +194,7 @@ public class NabuLogExporter implements LogExporter {
         @Override
         public void run() {
             try (RandomAccessFile reader = new RandomAccessFile(filePath.toFile(), "r")) {
+
                 String logEntry;
 
                 // Initially, set the reader to position read from state
@@ -197,56 +207,38 @@ public class NabuLogExporter implements LogExporter {
                     if (logEntry != null) {
                         LOG.info("New log: " + logEntry);
 
-                        handleLog(logEntry);
+                        // handleLog(logEntry);
                         saveState(reader.getFilePointer());
                     } else {
-                        Thread.sleep(SLEEP_TIME_MILLISECONDS);
+                        Thread.sleep(LOG_EXPORT_POLL_DELAY_MILLISECONDS);
                         reader.seek(reader.getFilePointer()); // Reset the file pointer to the current position
                     }
                 }
             } catch (IOException | InterruptedException e) {
                 LOG.severe("Error reading log file: " + e.getMessage());
+                state.close();
                 Thread.currentThread().interrupt();
             }
         }
 
         private void saveState(long position) {
-            try (BufferedWriter writer = Files.newBufferedWriter(Path.of(stateFilePath), StandardOpenOption.CREATE,
-                    StandardOpenOption.TRUNCATE_EXISTING)) {
-                writer.write(Long.toString(position));
-                writer.flush();
-
-                LOG.info("Saved state at position: " + position);
-            } catch (IOException e) {
-                LOG.severe("Error saving state: " + e.getMessage());
-            }
+            state.saveState(position);
         }
 
         private long readState() {
-            if (Files.exists(Path.of(stateFilePath))) {
-                try (BufferedReader reader = Files.newBufferedReader(Path.of(stateFilePath))) {
-                    String line = reader.readLine();
-
-                    if (line != null) {
-                        return Long.parseLong(line);
-                    }
-                } catch (IOException e) {
-                    LOG.severe("Error reading state: " + e.getMessage());
-                    return 0;
-                }
-            }
-            return 0;
+            return state.readState();
         }
+
     }
 
     public NabuLogExporter(String logPath) {
-        this.LOG_PATH_DIR = Path.of(logPath);
+        this.logPathDir = Path.of(logPath);
         this.executorService = Executors.newCachedThreadPool();
     }
 
     public NabuLogExporter() {
-        this.LOG_PATH_DIR = Path.of(System.getenv("NABU_TRACING_LOG_PATH"));
-        this.stateFilePath = Path.of(System.getenv("LOG_EXPORTER_STATE_PATH"));
+        this.logPathDir = Path.of(System.getenv("NABU_TRACING_LOG_PATH"));
+        this.stateDirPath = Path.of(System.getenv("LOG_EXPORTER_STATE_PATH"));
         this.executorService = Executors.newCachedThreadPool();
     }
 
