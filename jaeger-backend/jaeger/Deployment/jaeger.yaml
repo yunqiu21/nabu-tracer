@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+  labels:
+    app: jaeger
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: jaeger
+  template:
+    metadata:
+      labels:
+        app: jaeger
+    spec:
+      containers:
+      - name: all-in-one-1
+        image: jaegertracing/all-in-one
+        imagePullPolicy: Always
+        resources: {}
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        env:
+          - name: COLLECTOR_OTLP_ENABLED
+            value: "true"
+          - name: COLLECTOR_ZIPKIN_HOST_PORT
+            value: "9411"
+          - name: LOG_LEVEL
+            value: "debug"
+          - name: ES_TAGS_AS_FIELDS_ALL
+            value: "true"
+          - name: SPAN_STORAGE_TYPE
+            value: "elasticsearch"
+          - name: ES_SERVER_URLS
+            valueFrom:
+              secretKeyRef:
+                name: es-server-urls
+                key: es-server-urls
+          - name: ES_USERNAME
+            value: elastic
+          - name: ES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: es-password
+                key: es-password
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
