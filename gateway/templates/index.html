@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IPFS HTTP Gateway Server</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        .response-line {
+            max-height: 80px;
+            overflow-y: auto;
+            border: 1px solid #000;
+            margin-bottom: 10px;
+            padding: 5px;
+            background-color: #f9f9f9;
+        }
+        #payload {
+            width: 100%;
+            height: 100px;
+        }
+        #response {
+            margin-top: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            margin-right: 10px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h1>IPFS HTTP Gateway Server</h1>
+    <textarea id="payload" placeholder="Enter payload for PUT request"></textarea>
+    <br><br>
+    <button onclick="sendGetRequest()">Send GET Request</button>
+    <button onclick="sendPutRequest()">Send PUT Request</button>
+    <br><br>
+    <div id="response"></div>
+
+    <script>
+        function sendGetRequest() {
+            fetch('/ipfs', {
+                method: 'GET',
+            })
+            .then(response => response.json())
+            .then(data => {
+                displayResponse(data);
+            })
+            .catch(error => {
+                document.getElementById('response').innerText = `Error: ${error}`;
+            });
+        }
+
+        function sendPutRequest() {
+            const payload = document.getElementById('payload').value;
+
+            fetch(`/ipfs`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'text/plain'
+                },
+                body: payload
+            })
+            .then(response => {
+                if (response.status === 200) {
+                    return response.json();
+                } else {
+                    throw new Error('Error: ' + response.statusText);
+                }
+            })
+            .then(data => {
+                displayResponse({'content': 'Publish successful!'});
+            })
+            .catch(error => {
+                displayError(error.message);
+            });
+        }
+
+        function displayResponse(data) {
+            console.log(data);
+            const responseElement = document.getElementById('response');
+            responseElement.innerHTML = '';
+
+            if (Array.isArray(data.content)) {
+                const content = data.content.map(item => {
+                    if (item.error) {
+                        return `<div class="response-line">Error: ${item.error}</div>`;
+                    } else {
+                        return `<div class="response-line">${item.content}</div>`;
+                    }
+                }).join('');
+                responseElement.innerHTML += `Result:<br><br>${content}`;
+            } else {
+                responseElement.innerHTML += `${data.content}`;
+            }
+        }
+
+        function displayError(error) {
+            console.log(error);
+            const responseElement = document.getElementById('response');
+            responseElement.innerHTML = `<div class="response-line">Error: ${error}</div>`;
+        }
+    </script>
+</body>
+</html>
