@@ -43,10 +43,10 @@
     <script>
         function sendGetRequest() {
             const eventSource = new EventSource('/ipfs');
+            const responseElement = document.getElementById('response');
+            responseElement.innerHTML = ""
             eventSource.onmessage = function(event) {
                 const data = JSON.parse(event.data);
-                const responseElement = document.getElementById('response');
-
                 if (data.error) {
                     responseElement.innerHTML += `<div class="response-line">
                     [Node: ${data.node}] [Trace: ${data.trace}] [Time taken: ${data.time_taken}]
