@@ -42,16 +42,25 @@
 
     <script>
         function sendGetRequest() {
-            fetch('/ipfs', {
-                method: 'GET',
-            })
-            .then(response => response.json())
-            .then(data => {
-                displayResponse(data);
-            })
-            .catch(error => {
-                document.getElementById('response').innerText = `Error: ${error}`;
-            });
+            const eventSource = new EventSource('/ipfs');
+            eventSource.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                const responseElement = document.getElementById('response');
+
+                if (data.error) {
+                    responseElement.innerHTML += `<div class="response-line">
+                    [Node: ${data.node}] [Trace: ${data.trace}] [Time taken: ${data.time_taken}]
+                    <br>Error: ${data.error}</div>`;
+                } else {
+                    responseElement.innerHTML += `<div class="response-line">
+                    [Node: ${data.node}] [Trace: ${data.trace}] [Time taken: ${data.time_taken}]
+                    <br>Content: ${data.content}</div>`;
+                }
+            };
+
+            eventSource.onerror = function() {
+                eventSource.close();
+            };
         }
 
         function sendPutRequest() {
@@ -72,36 +81,13 @@
                 }
             })
             .then(data => {
-                displayResponse({'content': 'Publish successful!'});
+                const responseElement = document.getElementById('response');
+                responseElement.innerHTML = "Publish successful!";
             })
             .catch(error => {
-                displayError(error.message);
+                const responseElement = document.getElementById('response');
+                responseElement.innerHTML = error.message;
             });
-        }
-
-        function displayResponse(data) {
-            console.log(data);
-            const responseElement = document.getElementById('response');
-            responseElement.innerHTML = '';
-
-            if (Array.isArray(data.content)) {
-                const content = data.content.map(item => {
-                    if (item.error) {
-                        return `<div class="response-line">Error: ${item.error}</div>`;
-                    } else {
-                        return `<div class="response-line">${item.content}</div>`;
-                    }
-                }).join('');
-                responseElement.innerHTML += `Result:<br><br>${content}`;
-            } else {
-                responseElement.innerHTML += `${data.content}`;
-            }
-        }
-
-        function displayError(error) {
-            console.log(error);
-            const responseElement = document.getElementById('response');
-            responseElement.innerHTML = `<div class="response-line">Error: ${error}</div>`;
         }
     </script>
 </body>
