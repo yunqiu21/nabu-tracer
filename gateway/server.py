@@ -48,10 +48,10 @@ def get_ipfs_content():
         # Sample CIDs for tracing
         nsamples = max(1, len(cid_list) // 10)
         traced = random.sample(range(len(cid_list)), nsamples)
-
+        start_time = time.time()
         with ThreadPoolExecutor() as executor:
             future_to_cid = {
-                executor.submit(send_single_get_request, cid, i in traced): cid
+                executor.submit(send_single_get_request, cid, i in traced, start_time): cid
                 for i, cid in enumerate(cid_list)
             }
             for future in as_completed(future_to_cid):
@@ -61,7 +61,9 @@ def get_ipfs_content():
                     if status != 200:
                         yield f'data: {{"error": "{response}", "node": "nabu-{node}", "trace": "{trace}", "time_taken": "{time_taken:.2f}s"}}\n\n'
                     else:
-                        yield f'data: {{"content": "{response}", "node": "nabu-{node}", "trace": "{trace}", "time_taken": "{time_taken:.2f}s"}}\n\n'
+                        # Escape newlines
+                        escaped_response = response.replace("\n", "\\n").replace("\r", "\\r")
+                        yield f'data: {{"content": "{escaped_response}", "node": "nabu-{node}", "trace": "{trace}", "time_taken": "{time_taken:.2f}s"}}\n\n'
                 except Exception as e:
                     yield f'data: {{"error": "{str(e)}", "node": "nabu-{node}", "trace": "{trace}", "time_taken": "N/A"}}\n\n'
 
@@ -94,7 +96,7 @@ def put_ipfs_content():
         return jsonify({"error": str(e)}), 500
 
 
-def send_single_get_request(content, trace=False):
+def send_single_get_request(content, trace, start_time):
     global IPFS_GET_NODE
     node = IPFS_GET_NODE
     IPFS_GET_NODE = (IPFS_GET_NODE + 1) % len(IPFS_URL)
@@ -110,7 +112,6 @@ def send_single_get_request(content, trace=False):
     if not url:
         return 400, "URL is required", None, None, None
 
-    start_time = time.time()
     try:
         response = requests.get(url)
         response.raise_for_status()

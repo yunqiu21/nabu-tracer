@@ -52,9 +52,11 @@
                     [Node: ${data.node}] [Trace: ${data.trace}] [Time taken: ${data.time_taken}]
                     <br>Error: ${data.error}</div>`;
                 } else {
+                    const content = data.content.replace(/\n/g, '<br>').replace(/\r/g, '<br>');
+                    console.log(content)
                     responseElement.innerHTML += `<div class="response-line">
                     [Node: ${data.node}] [Trace: ${data.trace}] [Time taken: ${data.time_taken}]
-                    <br>Content: ${data.content}</div>`;
+                    <br>Content: ${content}</div>`;
                 }
             };
 
