@@ -10,63 +10,165 @@
             margin: 20px;
         }
         .response-line {
-            max-height: 80px;
+            max-height: 100px;
             overflow-y: auto;
             border: 1px solid #000;
-            margin-bottom: 10px;
-            padding: 5px;
+            margin-bottom: 8px;
+            padding: 10px;
             background-color: #f9f9f9;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        .response-line.trace {
+            background-color: #e0e0e0;
+        }
+        .metadata {
+            font-size: 12px;
+            margin-bottom: 8px;
+            display: flex;
+            flex-wrap: wrap;
+        }
+        .metadata span {
+            margin-right: 15px;
         }
         #payload {
             width: 100%;
             height: 100px;
+            border-radius: 5px;
+            padding: 10px;
+            font-size: 14px;
         }
         #response {
             margin-top: 20px;
+        }
+        #loading {
+            display: none;
+            margin-top: 20px;
+            font-size: 14px;
+            color: #555;
         }
         button {
             padding: 10px 20px;
             margin-right: 10px;
             cursor: pointer;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        .loading {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 2s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        #health-status {
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+        }
+        .node-status {
+            margin-right: 20px;
+            padding: 5px;
+        }
+        .healthy {
+            color: green;
+        }
+        .unhealthy {
+            color: red;
         }
     </style>
 </head>
 <body>
-    <h1>IPFS HTTP Gateway Server</h1>
+    <h1>IPFS HTTP Gateway Server (DEBUG)</h1>
+    <div id="health-status">
+        <span>Nodes:</span>
+        <!-- TODO: Add a legend? -->
+        <div id="health-status-body" style="display: flex;"></div>
+    </div>
     <textarea id="payload" placeholder="Enter payload for PUT request"></textarea>
     <br><br>
     <button onclick="sendGetRequest()">Send GET Request</button>
     <button onclick="sendPutRequest()">Send PUT Request</button>
     <br><br>
+    <div id="loading"><div class="loading"></div> Loading...</div>
     <div id="response"></div>
 
     <script>
+        function fetchHealthStatus() {
+            fetch('/ipfs/health')
+                .then(response => response.json())
+                .then(data => {
+                    const healthStatusBody = document.getElementById('health-status-body');
+                    healthStatusBody.innerHTML = '';
+                    for (const [node, status] of Object.entries(data)) {
+                        const statusClass = status.toLowerCase();
+                        healthStatusBody.innerHTML += `<div class="node-status ${statusClass}">${node}</div>`;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching health status:', error);
+                });
+        }
+
+        function showLoading() {
+            const loadingElement = document.getElementById('loading');
+            loadingElement.style.display = 'block';
+        }
+
+        function hideLoading() {
+            const loadingElement = document.getElementById('loading');
+            loadingElement.style.display = 'none';
+        }
+
         function sendGetRequest() {
+            showLoading();
             const eventSource = new EventSource('/ipfs');
             const responseElement = document.getElementById('response');
-            responseElement.innerHTML = ""
+            responseElement.innerHTML = "";
             eventSource.onmessage = function(event) {
+                hideLoading();
                 const data = JSON.parse(event.data);
                 if (data.error) {
-                    responseElement.innerHTML += `<div class="response-line">
-                    [Node: ${data.node}] [Trace: ${data.trace}] [Time taken: ${data.time_taken}]
-                    <br>Error: ${data.error}</div>`;
+                    console.log(`Error: ${data.error}`);
                 } else {
+                    let responseLineClass = "response-line";
                     const content = data.content.replace(/\n/g, '<br>').replace(/\r/g, '<br>');
-                    console.log(content)
-                    responseElement.innerHTML += `<div class="response-line">
-                    [Node: ${data.node}] [Trace: ${data.trace}] [Time taken: ${data.time_taken}]
-                    <br>Content: ${content}</div>`;
+                    let metadata = `
+                        <div class="metadata">
+                            <span>Node: ${data.node}</span>
+                            <span>Time Taken: ${data.time_taken}</span>`;
+                    if (data.trace === "True") {
+                        responseLineClass += " trace";
+                        metadata += `<span>Trace ID: ${data.trace_id}</span>`;
+                    }
+                    metadata += `</div>`;
+
+                    responseElement.innerHTML +=
+                        `<div class="${responseLineClass}">
+                            ${metadata}
+                            <div>${content}</div>
+                        </div>`;
                 }
             };
 
             eventSource.onerror = function() {
+                hideLoading();
                 eventSource.close();
             };
         }
 
         function sendPutRequest() {
+            showLoading();
             const payload = document.getElementById('payload').value;
+            const responseElement = document.getElementById('response');
+            responseElement.innerHTML = "";
 
             fetch(`/ipfs`, {
                 method: 'PUT',
@@ -76,21 +178,28 @@
                 body: payload
             })
             .then(response => {
+                hideLoading();
                 if (response.status === 200) {
                     return response.json();
                 } else {
-                    throw new Error('Error: ' + response.statusText);
+                    throw new Error(response.statusText);
                 }
             })
             .then(data => {
-                const responseElement = document.getElementById('response');
-                responseElement.innerHTML = "Publish successful!";
+                console.log(data);
+                responseElement.innerHTML = "Publish successful.";
             })
             .catch(error => {
-                const responseElement = document.getElementById('response');
-                responseElement.innerHTML = error.message;
+                console.log(error.message);
+                responseElement.innerHTML = "Publish failed.";
             });
         }
+
+        // Periodically fetch the health status every 60 seconds
+        setInterval(fetchHealthStatus, 60000);
+
+        // Initial fetch of health status
+        fetchHealthStatus();
     </script>
 </body>
 </html>

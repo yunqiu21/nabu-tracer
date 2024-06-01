@@ -4,6 +4,7 @@ import requests
 import random
 from google.cloud import firestore
 import time
+import threading
 
 app = Flask(__name__)
 
@@ -24,13 +25,16 @@ IPFS_URL = [
     "http://10.200.0.2:5000",  # nabu-9
 ]
 
-IPFS_PUT_NODE = 6  # Hardcoded for now to a responsive node.
+IPFS_PUT_NODE = 1  # Hardcoded for now to a responsive node
 IPFS_GET_NODE = 0  # Update with each GET request
 
 # IPFS routes
 PUT_ROUTE = "/api/v0/block/put"
 GET_ROUTE = "/api/v0/block/get"
+HEALTH_ROUTE = "/api/v0/healthz"
 
+# Dictionary to store the health status of IPFS nodes
+node_health_status = {idx: "Unknown" for idx in range(len(IPFS_URL))}
 
 # Web UI
 @app.route("/")
@@ -57,15 +61,15 @@ def get_ipfs_content():
             for future in as_completed(future_to_cid):
                 cid = future_to_cid[future]
                 try:
-                    status, response, node, trace, time_taken = future.result()
+                    status, response, node, trace, time_taken, trace_id = future.result()
                     if status != 200:
-                        yield f'data: {{"error": "{response}", "node": "nabu-{node}", "trace": "{trace}", "time_taken": "{time_taken:.2f}s"}}\n\n'
+                        yield f'data: {{"error": "{response}", "node": "nabu-{node}", "trace": "{trace}", "trace_id": "{trace_id}", "time_taken": "{time_taken:.2f}s"}}\n\n'
                     else:
                         # Escape newlines
                         escaped_response = response.replace("\n", "\\n").replace("\r", "\\r")
-                        yield f'data: {{"content": "{escaped_response}", "node": "nabu-{node}", "trace": "{trace}", "time_taken": "{time_taken:.2f}s"}}\n\n'
+                        yield f'data: {{"content": "{escaped_response}", "node": "nabu-{node}", "trace": "{trace}", "trace_id": "{trace_id}", "time_taken": "{time_taken:.2f}s"}}\n\n'
                 except Exception as e:
-                    yield f'data: {{"error": "{str(e)}", "node": "nabu-{node}", "trace": "{trace}", "time_taken": "N/A"}}\n\n'
+                    yield f'data: {{"error": "{str(e)}", "node": "nabu-{node}", "trace": "{trace}", "trace_id": "N/A", "time_taken": "N/A"}}\n\n'
 
     return Response(generate(), mimetype="text/event-stream")
 
@@ -110,24 +114,54 @@ def send_single_get_request(content, trace, start_time):
     print(url)
 
     if not url:
-        return 400, "URL is required", None, None, None
+        return 400, "URL is required", node, trace, None, None
 
     try:
         response = requests.get(url)
         response.raise_for_status()
         time_taken = time.time() - start_time
-        return response.status_code, response.text, node, trace, time_taken
+        trace_id = response.headers.get("Trace-id", "N/A")
+        return response.status_code, response.text, node, trace, time_taken, trace_id
 
     except requests.RequestException as e:
         time_taken = time.time() - start_time
+        trace_id = e.response.headers.get("Trace-id", "N/A") if e.response else "N/A"
         return (
             e.response.status_code if e.response else 500,
             str(e),
             node,
             trace,
             time_taken,
+            trace_id,
         )
 
+# Check the health of IPFS nodes
+@app.route("/ipfs/health", methods=["GET"])
+def get_ipfs_health():
+    return jsonify(node_health_status)
+
+# Check the health of IPFS nodes in parallel
+def check_node_health():
+    def check_health(url, idx):
+        health_url = url + HEALTH_ROUTE
+        print(health_url)
+        try:
+            response = requests.get(health_url)
+            response.raise_for_status()
+            return idx, "Healthy"
+        except requests.RequestException:
+            return idx, "Unhealthy"
+
+    while True:
+        with ThreadPoolExecutor() as executor:
+            futures = {executor.submit(check_health, url, idx): idx for idx, url in enumerate(IPFS_URL)}
+            for future in as_completed(futures):
+                idx, status = future.result()
+                node_health_status[idx] = status
+        time.sleep(60)  # Check health every 60 seconds
+
+# Start the health check in a separate thread
+threading.Thread(target=check_node_health, daemon=True).start()
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=80)
