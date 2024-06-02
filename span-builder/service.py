@@ -1,5 +1,7 @@
 from flask import Flask, request, jsonify
+import hashlib
 import json
+import logging
 import threading
 import requests
 import copy
@@ -28,6 +30,68 @@ class TraceConstructionError(Exception):
 class AddLineageError(Exception):
     pass
 
+def is_trace_complete_v2(trace_id: str) -> bool:
+    trace = data_store[trace_id]
+
+    for span, status in trace.items():
+        # Check if there is not a start and end. Should add extra validation besides length.
+        if len(status) != 2:
+            return False
+
+    return True
+    
+
+@app.route("/v3/buildspan", methods=["POST"])
+def build_span_v3():
+    content = request.get_json()
+
+    trace_id = content[RAW_LOG_TRACE_ID_KEY]
+    node_id = content[RAW_LOG_NODE_ID_KEY]
+    thread_id = content[RAW_LOG_THREAD_ID_KEY]
+    timestamp = int(content[RAW_LOG_TIME_STAMP_KEY])
+    span_name, stage = _get_func_name_and_stage(content)
+
+    logging.info(f"Received trace event: {trace_id}, {thread_id}, {span_name} {stage}")
+
+    trace = data_store.setdefault(trace_id, {})
+    lock = data_store_locks.setdefault(trace_id,threading.Lock())
+
+    with lock:
+        try:
+            key = (node_id, thread_id, span_name)
+
+            span = trace.setdefault(key, {})
+            span[stage] = timestamp
+
+            if is_trace_complete_v2(trace_id):
+                # This sends to Jaeger one by one - can we batch send these?
+                for key, value in trace.items():
+                    start, end = value.values()
+                    node_id, thread_id, span_name = key
+
+                    retval = copy.deepcopy(STARTER_SPAN)
+                    span_id = f"{trace_id}_{node_id}_{thread_id}_{span_name}_{stage}"
+                    span_id = hashlib.md5(span_id.encode('utf-8')).hexdigest()[:16]
+
+                    span = {
+                        JAEGER_TRACE_ID_KEY: trace_id,
+                        JAEGER_SPAN_ID_KEY: span_id,
+                        JAEGER_PARENT_SPAN_ID_KEY: "",
+                        JAEGER_START_TIME_NANO_KEY: start,
+                        JAEGER_END_TIME_NANO_KEY: end,
+                        JAEGER_SPAN_OPERATION_NAME_KEY: span_name,
+                        JAEGER_SPAN_KIND_KEY: 2,
+                    }
+                    retval["resourceSpans"][0]["scopeSpans"][0]["spans"].append(span)
+
+                    send_trace_to_jaeger(retval)
+                # Remove from storage
+                del data_store[trace_id]
+        except Exception as exc:
+            logging.exception(exc)
+            return jsonify({ 'error': str(exc)}), 500
+
+    return jsonify(), 200
 
 @app.route("/v1/buildspan", methods=["POST"])
 def build_span():
