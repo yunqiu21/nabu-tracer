@@ -63,13 +63,16 @@ public class NabuLogExporter implements LogExporter {
         LOG.info("Exporting log: " + log);
     }
 
-    @Override
-    public void processLogs() {
+    public void handleExistingLogFiles(Path logPathDir) {
+        LOG.info("Checking for existing log files in path: " + logPathDir.toString());
+
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(logPathDir)) {
             LOG.info("Checking for existing files in log path: " + logPathDir);
 
             for (Path entry : stream) {
-                if (Files.isRegularFile(entry)) {
+                if (Files.isDirectory(entry)) {
+                    handleExistingLogFiles(entry);
+                } else if (Files.isRegularFile(entry)) {
                     if (Files.size(entry) < MAX_LOG_FILE_SIZE) {
                         if (entry.toString().endsWith(LOG_FILE_IDENTIFIER)) {
                             executorService.submit(new LogTask(entry, stateDirPath));
@@ -81,7 +84,19 @@ public class NabuLogExporter implements LogExporter {
         } catch (IOException e) {
             LOG.severe("Error reading existing files: " + e.getMessage());
         }
+    }
 
+    private void registerAll(Path start, WatchService watchService) throws IOException {
+        Files.walkFileTree(start, new SimpleFileVisitor<Path>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+                dir.register(watchService, StandardWatchEventKinds.ENTRY_CREATE, StandardWatchEventKinds.ENTRY_MODIFY);
+                return FileVisitResult.CONTINUE;
+            }
+        });
+    }
+
+    public void handleNewLogFiles(Path logDirPath) {
         try (WatchService watchService = FileSystems.getDefault().newWatchService()) {
             logPathDir.register(watchService, StandardWatchEventKinds.ENTRY_CREATE);
 
@@ -140,14 +155,10 @@ public class NabuLogExporter implements LogExporter {
         }
     }
 
-    private void registerAll(Path start, WatchService watchService) throws IOException {
-        Files.walkFileTree(start, new SimpleFileVisitor<Path>() {
-            @Override
-            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
-                dir.register(watchService, StandardWatchEventKinds.ENTRY_CREATE, StandardWatchEventKinds.ENTRY_MODIFY);
-                return FileVisitResult.CONTINUE;
-            }
-        });
+    @Override
+    public void processLogs() {
+        handleExistingLogFiles(logPathDir);
+        handleNewLogFiles(logPathDir);
     }
 
     private static class LogTask implements Runnable {
@@ -205,7 +216,7 @@ public class NabuLogExporter implements LogExporter {
 
         private static void handleLog(String line) {
             HttpClient client = HttpClient.newHttpClient();
-            URI uri = URI.create("http://127.0.0.1:5200/v1/buildspan");
+            URI uri = URI.create("http://127.0.0.1:5200/v3/buildspan");
 
             String requestBody = parseLog(line);
             LOG.info("Sending " + requestBody);
