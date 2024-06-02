@@ -71,7 +71,7 @@ def build_span_v3():
 
                     retval = copy.deepcopy(STARTER_SPAN)
                     span_id = f"{trace_id}_{node_id}_{thread_id}_{span_name}_{stage}"
-                    span_id = hashlib.md5(span_id.encode('utf-8')).hexdigest()[:16]
+                    span_id = hashlib.md5(str(content).encode('utf-8')).hexdigest()[:16]
 
                     span = {
                         JAEGER_TRACE_ID_KEY: trace_id,
