@@ -7,16 +7,19 @@ import java.net.http.HttpRequest.BodyPublishers;
 import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.file.DirectoryStream;
 import java.nio.file.FileSystems;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardWatchEventKinds;
 import java.nio.file.WatchEvent;
 import java.nio.file.WatchKey;
 import java.nio.file.WatchService;
-
+import java.nio.file.attribute.BasicFileAttributes;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Instant;
 
 import java.util.logging.Logger;
 import java.util.logging.Level;
@@ -102,13 +105,26 @@ public class NabuLogExporter implements LogExporter {
                     }
 
                     @SuppressWarnings("unchecked")
-                    WatchEvent<Path> ev = (WatchEvent<Path>) event;
-                    Path filename = ev.context();
+                    WatchEvent<Path> watch_event = (WatchEvent<Path>) event;
+                    Path filename = watch_event.context();
+                    LOG.info("TEST: + " + filename.toString());
                     Path filePath = logPathDir.resolve(filename);
 
                     if (kind == StandardWatchEventKinds.ENTRY_CREATE) {
-                        if (filePath.toString().endsWith(LOG_FILE_IDENTIFIER)) {
+                        // Handle all directories (including nested)
+                        if (Files.isDirectory(filePath)) {
+                            try {
+                                registerAll(filePath, watchService);
+                            } catch (IOException e) {
+                                LOG.severe("Error registering new directory: " + e.getMessage());
+                            }
+                        } else if (filePath.toString().endsWith(LOG_FILE_IDENTIFIER)) {
                             LOG.info("New file detected: " + filePath);
+                            executorService.submit(new LogTask(filePath, stateDirPath));
+                        }
+                    } else if (kind == StandardWatchEventKinds.ENTRY_MODIFY) {
+                        if (Files.isRegularFile(filePath) && filePath.toString().endsWith(LOG_FILE_IDENTIFIER)) {
+                            LOG.info("File modified: " + filePath);
                             executorService.submit(new LogTask(filePath, stateDirPath));
                         }
                     }
@@ -122,6 +138,16 @@ public class NabuLogExporter implements LogExporter {
         } catch (IOException e) {
             LOG.severe("Error watching directory: " + e.getMessage());
         }
+    }
+
+    private void registerAll(Path start, WatchService watchService) throws IOException {
+        Files.walkFileTree(start, new SimpleFileVisitor<Path>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+                dir.register(watchService, StandardWatchEventKinds.ENTRY_CREATE, StandardWatchEventKinds.ENTRY_MODIFY);
+                return FileVisitResult.CONTINUE;
+            }
+        });
     }
 
     private static class LogTask implements Runnable {
@@ -144,38 +170,44 @@ public class NabuLogExporter implements LogExporter {
         }
 
         private static String parseLog(String line) {
-            String[] parts = line.split(" ", 7);
+            // String[] parts = line.split(" ", 7);
+            String traceId = "bb2a18fe-f06e-4ab7-b531-24e1b9b6f303";
+            int nodeId = 3;
+            int threadId = 35;
+            String timestamp = "1717263618390";
+            String eventType = "BITSWAP_SERVER_START";
+            Instant now = Instant.now();
+
+            // Convert the Instant to a Unix timestamp (seconds since epoch)
+            long unixTimestamp = now.getEpochSecond();
+            String ts = String.valueOf(unixTimestamp);
+
+            return "{" +
+                    "\"traceId\":\"" + traceId + "\"," +
+                    "\"nodeId\":\"" + nodeId + "\"," +
+                    "\"threadId\":\"" + threadId + "\"," +
+                    "\"timestamp\":\"" + ts + "\"," +
+                    "\"eventType\":\"" + eventType + "\"" +
+                    "}";
+            // 2024-06-01 17:40:18.390 BITSWAP_SERVER_START Want 3 hashes. Peer nodeId: 2
 
             // TODO(@millerm): better parse
-            return "{" +
-                    "\"traceId\":\"" + parts[0] + "\"," +
-                    "\"spanId\":\"" + parts[1] + "\"," +
-                    "\"operationName\":\"" + parts[5] + "\"," +
-                    "\"references\":[]," +
-                    "\"startTimeUnixNano\":\"" + "1716525641" + "\"," +
-                    "\"endTimeUnixNano\":\"" + "1716525642" + "\"," +
-                    "\"kind\":2" +
-                    "}";
+            // return "{" +
+            // "\"traceId\":\"" + parts[0] + "\"," +
+            // "\"spanId\":\"" + parts[1] + "\"," +
+            // "\"nodeId\":\"" + parts[5] + "\"," +
+            // "\"threadId\":[]," +
+            // "\"timestamp\":\"" + "1716525641" + "\"," +
+            // "\"eventType\":\"" + "1716525642" + "\"," +
+            // "}";
 
         }
 
         private static void handleLog(String line) {
             HttpClient client = HttpClient.newHttpClient();
-            URI uri = URI.create("http://localhost:4318/v1/traces");
+            URI uri = URI.create("http://127.0.0.1:5200/v1/buildspan");
 
-            StringBuilder spansArray = new StringBuilder();
-            spansArray.append("[");
-            String span = parseLog(line);
-            spansArray.append(span);
-            spansArray.append("]");
-
-            // Wrap the spans array in a root JSON object
-            String requestBody = "{\"resourceSpans\":[" +
-                    "{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"nabu-tracer-tester2\"}}]},"
-                    +
-                    "\"scopeSpans\":[{\"scope\":{\"name\":\"manual-test\"},\"spans\":"
-                    + spansArray.toString() + "}]}]}";
-
+            String requestBody = parseLog(line);
             LOG.info("Sending " + requestBody);
 
             HttpRequest request = HttpRequest.newBuilder()
@@ -209,7 +241,7 @@ public class NabuLogExporter implements LogExporter {
                     if (logEntry != null) {
                         LOG.info("New log: " + logEntry);
 
-                        // handleLog(logEntry);
+                        handleLog(logEntry);
                         saveState(reader.getFilePointer());
                     } else {
                         Thread.sleep(LOG_EXPORT_POLL_DELAY_MILLISECONDS);
