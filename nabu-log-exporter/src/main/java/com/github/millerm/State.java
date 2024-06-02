@@ -6,12 +6,25 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.logging.Logger;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 
 public class State {
     private static final Logger LOG = Logger.getLogger(State.class.getName());
     private final FileChannel fileChannel;
 
     public State(String stateDirPath) throws IOException {
+        Path path = Paths.get(stateDirPath);
+
+        if (!Files.exists(path)) {
+            try {
+                Files.createDirectories(path.getParent());
+                Files.createFile(path);
+            } catch (IOException e) {
+                LOG.severe("Error creating state file: " + e);
+            }
+        }
+
         fileChannel = FileChannel.open(
                 Path.of(stateDirPath),
                 StandardOpenOption.CREATE,
@@ -36,7 +49,7 @@ public class State {
     public long readState() {
         try {
             if (fileChannel.size() == 0) {
-                // File is empty, return default initial state
+                LOG.info("State file is empty.");
                 return 0;
             }
 
@@ -48,7 +61,7 @@ public class State {
                 return buffer.getLong();
             }
         } catch (IOException e) {
-            LOG.severe("Error reading state: " + e.getMessage());
+            LOG.severe("Error reading state: " + e);
         }
         return 0;
     }

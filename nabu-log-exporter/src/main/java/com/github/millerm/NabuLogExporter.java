@@ -1,7 +1,5 @@
 package com.github.millerm;
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.net.URI;
@@ -11,7 +9,6 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.nio.file.StandardWatchEventKinds;
 import java.nio.file.WatchEvent;
 import java.nio.file.WatchKey;
@@ -32,6 +29,8 @@ public class NabuLogExporter implements LogExporter {
     private static final int LOG_EXPORT_POLL_DELAY_MILLISECONDS = 1;
 
     private static final int MAX_LOG_FILE_SIZE = 200 * 1024 * 1024;
+
+    private static final String LOG_FILE_IDENTIFIER = "trace.log";
 
     private final Path logPathDir;
 
@@ -69,7 +68,9 @@ public class NabuLogExporter implements LogExporter {
             for (Path entry : stream) {
                 if (Files.isRegularFile(entry)) {
                     if (Files.size(entry) < MAX_LOG_FILE_SIZE) {
-                        executorService.submit(new LogTask(entry, stateDirPath));
+                        if (entry.toString().endsWith(LOG_FILE_IDENTIFIER)) {
+                            executorService.submit(new LogTask(entry, stateDirPath));
+                        }
                     }
 
                 }
@@ -106,8 +107,10 @@ public class NabuLogExporter implements LogExporter {
                     Path filePath = logPathDir.resolve(filename);
 
                     if (kind == StandardWatchEventKinds.ENTRY_CREATE) {
-                        LOG.info("New file detected: " + filePath);
-                        executorService.submit(new LogTask(filePath, stateDirPath));
+                        if (filePath.toString().endsWith(LOG_FILE_IDENTIFIER)) {
+                            LOG.info("New file detected: " + filePath);
+                            executorService.submit(new LogTask(filePath, stateDirPath));
+                        }
                     }
                 }
 
@@ -135,8 +138,7 @@ public class NabuLogExporter implements LogExporter {
                 state = new State(this.stateDirPath);
                 this.filePointer = readState();
             } catch (IOException e) {
-                LOG.severe("Error reading log file: " + e.getMessage());
-                state.close();
+                LOG.severe("Error initiating state: " + e);
                 Thread.currentThread().interrupt();
             }
         }
