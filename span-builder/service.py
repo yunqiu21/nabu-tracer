@@ -1,12 +1,11 @@
+from typing import Optional, List
 from flask import Flask, request, jsonify
-import hashlib
-import json
-import logging
 import threading
 import requests
 import copy
 from collections import defaultdict
-import os
+import logging
+import hashlib
 from constants import *
 
 app = Flask(__name__)
@@ -39,7 +38,120 @@ def is_trace_complete_v2(trace_id: str) -> bool:
             return False
 
     return True
+
+
+
+class Span:
+    def __init__(self, node_id: str, thread_id: str, type: str, start_time: int, end_time: int, peer_node_id: Optional[str] = None, parent: Optional['Span'] = None, children: Optional[List['Span']] = None):
+        self.node_id = node_id
+        self.peer_node_id = peer_node_id
+        self.thread_id = thread_id
+        self.type = type
+        self.start_time = start_time
+        self.end_time = end_time
+        self.parent = parent
+        self.children = children if children is not None else []
+
+
+
+def build_parent_child_spans(trace_id: str):
+    spans = []
+
+    def find_span(node_id: str, type: str):
+        for i, span in enumerate(spans):
+            if (span.node_id == node_id and span.type == type):
+                return i
+
+        return -1
+
+    trace = data_store[trace_id]
+
+    # Stage is either 'start' or 'end'
+    for k, stages in trace.items():
+        # If 'start' and 'end' are not both present, skip
+        if len(stages) < 2:
+            continue
+        start, end = v.values()
+
+        node_id, peer_node_id, thread_id, type = k
+
+        span = Span(
+            node_id=node_id,
+            thread_id=thread_id,
+            type=type,
+            start_time=start,
+            end_time=end,
+            peer_node_id=peer_node_id,
+            parent=None,
+            children=[]
+        )
+
+        spans.append(span)
+
+        if span.type == GET_PROVIDERS_CLIENT:
+            maybe_child_index = find_span(span.peer_node_id, GET_PROVIDERS_SERVER)
+
+            if maybe_child_index > 0:
+                child = spans[maybe_child_index]
+                child.parent = span
+                span.children.append(child)
+
+        elif span.type == GET_PROVIDERS_SERVER:
+            maybe_parent_index = find_span(span.peer_node_id, GET_PROVIDERS_CLIENT)
+
+            if maybe_parent_index > 0:
+                parent = spans[maybe_child_index]
+                parent.children.append(span)
+                span.parent = parent
+        elif span.type == BITSWAP_CLIENT:
+            maybe_child_index = find_span(span.peer_node_id, BITSWAP_SERVER)
+
+            if maybe_child_index > 0:
+                child = spans[maybe_child_index]
+                child.parent = span
+                span.children.append(child)
+        elif span.type == BITSWAP_SERVER:
+            maybe_parent_index = find_span(span.peer_node_id, BITSWAP_CLIENT)
+
+            if maybe_parent_index > 0:
+                parent = spans[maybe_parent_index]
+                parent.children.append(span)
+                span.parent = parent
+            
+            maybe_child_index = find_span(span.node_id, READ_FROM_FILE_STORE)
+            if maybe_child_index > 0:
+                child = spans[maybe_child_index]
+                child.parent = span
+                span.children.append(child)
+        elif span.type == READ_FROM_FILE_STORE:
+            maybe_parent_index = find_span(span.node_id, BITSWAP_SERVER)
+
+            if maybe_parent_index > 0:
+                parent = spans[maybe_parent_index]
+                parent.children.append(span)
+                span.parent = parent
+
+
+    return spans
+
     
+def print_spans(spans, prefix='', is_tail=True):
+    for i, span in enumerate(spans):
+        is_last = i == (len(spans) - 1)
+        connector = '└── ' if is_last else '├── '
+        child_prefix = '    ' if is_last else '│   '
+        
+        print(f"{prefix}{connector}Node id: {span.node_id}")
+        print(f"{prefix}{child_prefix}Peer node id: {span.peer_node_id}")
+        print(f"{prefix}{child_prefix}Event: {span.type}")
+        print(f"{prefix}{child_prefix}Start: {span.start_time}")
+        print(f"{prefix}{child_prefix}End: {span.end_time}")
+
+        if span.children:
+            new_prefix = prefix + child_prefix
+            print_spans(span.children, new_prefix, is_last)
+        
+
 
 @app.route("/v3/buildspan", methods=["POST"])
 def build_span_v3():
@@ -47,56 +159,58 @@ def build_span_v3():
 
     trace_id = content[RAW_LOG_TRACE_ID_KEY]
     node_id = content[RAW_LOG_NODE_ID_KEY]
+    peer_node_id = content[RAW_LOG_PEER_NODE_ID_KEY]
     thread_id = content[RAW_LOG_THREAD_ID_KEY]
     timestamp = int(content[RAW_LOG_TIME_STAMP_KEY])
     span_name, stage = _get_func_name_and_stage(content)
 
-    logging.info(f"Received trace event: {trace_id}, {thread_id}, {span_name} {stage}")
+    logging.info(f"Received trace event: {trace_id}, {thread_id}, {span_name}_{stage} {stage}")
 
     trace = data_store.setdefault(trace_id, {})
-    lock = data_store_locks.setdefault(trace_id,threading.Lock())
 
-    with lock:
-        try:
-            key = (node_id, thread_id, span_name)
+    key = (node_id, peer_node_id, thread_id, span_name)
 
-            span = trace.setdefault(key, {})
-            span[stage] = timestamp
+    span = trace.setdefault(key, {})
+    span[stage] = timestamp
 
-            if is_trace_complete_v2(trace_id):
-                # This sends to Jaeger one by one - can we batch send these?
-                for key, value in trace.items():
-                    start, end = value.values()
-                    node_id, thread_id, span_name = key
+    spans = build_parent_child_spans(trace_id)
 
-                    retval = copy.deepcopy(STARTER_SPAN)
-                    span_id = f"{trace_id}_{node_id}_{thread_id}_{span_name}_{stage}"
-                    span_id = hashlib.md5(str(content).encode('utf-8')).hexdigest()[:16]
+    print_spans(spans)
 
-                    span = {
-                        JAEGER_TRACE_ID_KEY: trace_id,
-                        JAEGER_SPAN_ID_KEY: span_id,
-                        JAEGER_PARENT_SPAN_ID_KEY: "",
-                        JAEGER_START_TIME_NANO_KEY: start,
-                        JAEGER_END_TIME_NANO_KEY: end,
-                        JAEGER_SPAN_OPERATION_NAME_KEY: span_name,
-                        JAEGER_SPAN_KIND_KEY: 2,
-                    }
-                    retval["resourceSpans"][0]["scopeSpans"][0]["spans"].append(span)
+    # TODO: build and sent parent child spans using this info
+    # if len(spans):
+    #     try:
+    #         # This sends to Jaeger one by one - can we batch send these?
+    #         for key, value in trace.items():
+    #             start, end = value.values()
+    #             node_id, thread_id, span_name = key
 
-                    send_trace_to_jaeger(retval)
-                # Remove from storage
-                del data_store[trace_id]
-        except Exception as exc:
-            logging.exception(exc)
-            return jsonify({ 'error': str(exc)}), 500
+    #             retval = copy.deepcopy(STARTER_SPAN)
+    #             span_id = f"{trace_id}_{node_id}_{thread_id}_{span_name}_{stage}"
+    #             span_id = hashlib.md5(span_id.encode('utf-8')).hexdigest()[:16]
+
+    #             span = {
+    #                 JAEGER_TRACE_ID_KEY: trace_id,
+    #                 JAEGER_SPAN_ID_KEY: span_id,
+    #                 JAEGER_PARENT_SPAN_ID_KEY: "",
+    #                 JAEGER_START_TIME_NANO_KEY: start,
+    #                 JAEGER_END_TIME_NANO_KEY: end,
+    #                 JAEGER_SPAN_OPERATION_NAME_KEY: span_name,
+    #                 JAEGER_SPAN_KIND_KEY: 2,
+    #             }
+    #             retval["resourceSpans"][0]["scopeSpans"][0]["spans"].append(span)
+
+    #             send_trace_to_jaeger(retval)
+    #             del data_store[trace_id]
+    #     except Exception as exc:
+    #         return jsonify({ 'error': str(exc)}), 500
 
     return jsonify(), 200
+    
 
 @app.route("/v1/buildspan", methods=["POST"])
 def build_span():
     if request.is_json:
-        
         content = request.get_json()
         val_trace_id = content[RAW_LOG_TRACE_ID_KEY]
         val_node_id = content[RAW_LOG_NODE_ID_KEY]
@@ -112,10 +226,11 @@ def build_span():
                 val_stage,
                 content,
             )
-            if is_span_complete(val_trace_id, val_node_id, val_thread_id, val_span_name):
-                payload = construct_trace_object_with_single_span(val_trace_id, val_node_id, val_thread_id, val_span_name)
-                send_trace_to_jaeger(payload)
-                delete_raw_log_from_data_store(val_trace_id, val_node_id, val_thread_id, val_span_name)
+            #if is_span_complete(val_trace_id, val_node_id, val_thread_id, val_span_name):
+            payload = construct_trace_object_with_single_span(val_trace_id, val_node_id, val_thread_id, val_span_name)
+            print(payload)
+            send_trace_to_jaeger(payload)
+            delete_raw_log_from_data_store(val_trace_id, val_node_id, val_thread_id, val_span_name)
             return (
                 jsonify({"message": "JSON received successfully", "data": content}),
                 200,
@@ -170,7 +285,8 @@ def delete_raw_log_from_data_store(
 def send_trace_to_jaeger(payload):
     print("Sending payload to Jaeger: ", payload)
     try:
-        requests.post(JAEGER_ENDPOINT, json=payload)
+        resp = requests.post(JAEGER_ENDPOINT, json=payload)
+        print(resp)
     except:
         raise JaegerPostError("Failed to post to Jaeger endpoint")
 
@@ -390,12 +506,15 @@ def _construct_span_object_from_log(span_start_log, span_stop_log):
     return span
 
 
+def _extract_event_info(event: str):
+    return event.rsplit('_', 1)
+
 def _get_func_name_and_stage(content):
-    val_event_type = content[RAW_LOG_EVENT_TYPE_KEY]
-    if Stage.START.name in val_event_type:
-        return val_event_type[: val_event_type.find(Stage.START.name)], Stage.START.name
-    elif Stage.STOP.name in val_event_type:
-        return val_event_type[: val_event_type.find(Stage.STOP.name)], Stage.STOP.name
+    event_type = content[RAW_LOG_EVENT_TYPE_KEY]
+
+    assert event_type.endswith(Stage.START.name) or event_type.endswith(Stage.END.name)
+
+    return _extract_event_info(event_type)
 
 
 if __name__ == "__main__":
