@@ -122,7 +122,6 @@ public class NabuLogExporter implements LogExporter {
                     @SuppressWarnings("unchecked")
                     WatchEvent<Path> watch_event = (WatchEvent<Path>) event;
                     Path filename = watch_event.context();
-                    LOG.info("TEST: + " + filename.toString());
                     Path filePath = logPathDir.resolve(filename);
 
                     if (kind == StandardWatchEventKinds.ENTRY_CREATE) {
