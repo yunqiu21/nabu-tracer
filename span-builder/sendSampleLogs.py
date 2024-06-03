@@ -11,11 +11,12 @@ def main():
     args = parser.parse_args()
 
     traceId = os.urandom(16).hex()
+    print(f"Simulating trace with trace ID: {traceId}")
     current_time = datetime.now()
     timestamp1 = current_time - timedelta(seconds=4)
     span1 = os.urandom(8).hex()
     payload1 = {
-        "traceId": "0f9c663e-cfe1-4934-968e-417764d57395",
+        "traceId": traceId,
         "spanId": span1,
         "nodeId": "node1",
         "threadId": "thread1",
@@ -27,7 +28,7 @@ def main():
 
     timestamp2 = current_time - timedelta(seconds=3)
     payload2 = {
-        "traceId": "0f9c663e-cfe1-4934-968e-417764d57395",
+        "traceId": traceId,
         "spanId": span1,
         "nodeId": "node1",
         "threadId": "thread1",
@@ -40,7 +41,7 @@ def main():
     span2 = os.urandom(8).hex()
     timestamp3 = current_time - timedelta(seconds=2)
     payload3 = {
-        "traceId": "0f9c663e-cfe1-4934-968e-417764d57395",
+        "traceId": traceId,
         "spanId": span2,
         "nodeId": "node2",
         "threadId": "thread1",
@@ -52,20 +53,20 @@ def main():
 
     timestamp4 = current_time - timedelta(seconds=1)
     payload4 = {
-        "traceId": "0f9c663e-cfe1-4934-968e-417764d57395",
+        "traceId": traceId,
         "spanId": span2,
         "nodeId": "node2",
         "threadId": "thread1",
         "timestamp": int(timestamp4.timestamp() * 1e9),
         "eventType": "GET_PROVIDERS_CLIENT_END",
-        "peerNodeId": "node3"
+        "peerNodeId": "node1"
     }
     requests.post(args.endpoint, json=payload4)
 
     span3 = os.urandom(8).hex()
     timestamp5 = current_time - timedelta(milliseconds=1800)
     payload5 = {
-        "traceId": "0f9c663e-cfe1-4934-968e-417764d57395",
+        "traceId": traceId,
         "spanId": span3,
         "nodeId": "node2",
         "threadId": "thread1",
@@ -77,7 +78,7 @@ def main():
 
     timestamp6 = current_time - timedelta(milliseconds=1200)
     payload6 = {
-        "traceId": "0f9c663e-cfe1-4934-968e-417764d57395",
+        "traceId": traceId,
         "spanId": span3,
         "nodeId": "node2",
         "threadId": "thread1",
@@ -90,7 +91,7 @@ def main():
 
     timestamp7 = current_time - timedelta(seconds=2)
     payload7 = {
-        "traceId": "0f9c663e-cfe1-4934-968e-417764d57395",
+        "traceId": traceId,
         "nodeId": "node3",
         "eventType": "BITSWAP_SERVER_START",
         "threadId": "thread4",
@@ -100,11 +101,11 @@ def main():
 
     }
     requests.post(args.endpoint, json=payload7)
-    timestamp8 = current_time - timedelta(seconds=1)
+    timestamp8 = current_time - timedelta(seconds=1.5)
 
     payload8 = {
         "nodeId": "node3",
-        "traceId": "0f9c663e-cfe1-4934-968e-417764d57395",
+        "traceId": traceId,
         "eventType": "READ_FROM_FILE_STORE_START",
         "threadId": "thread6",
         "timestamp": int(timestamp8.timestamp() * 1e9),
@@ -112,11 +113,11 @@ def main():
     }
     requests.post(args.endpoint, json=payload8)
 
-    timestamp9 = current_time - timedelta(seconds=1.5)
+    timestamp9 = current_time - timedelta(seconds=1)
 
     payload9 = {
         "nodeId": "node3",
-        "traceId": "0f9c663e-cfe1-4934-968e-417764d57395",
+        "traceId": traceId,
         "eventType": "READ_FROM_FILE_STORE_END",
         "threadId": "thread6",
         "timestamp": int(timestamp9.timestamp() * 1e9),
@@ -127,7 +128,7 @@ def main():
     timestamp10 = current_time - timedelta(seconds=.75)
     payload10 = {
         "nodeId": "node3",
-        "traceId": "0f9c663e-cfe1-4934-968e-417764d57395",
+        "traceId": traceId,
         "eventType": "BITSWAP_SERVER_END",
         "threadId": "thread4",
         "peerNodeId": "node2",
