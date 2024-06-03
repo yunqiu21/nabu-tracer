@@ -18,6 +18,8 @@ spec:
       - name: all-in-one-1
         image: jaegertracing/all-in-one
         imagePullPolicy: Always
+        args:
+        - "--query.max-clock-skew-adjustment=10s"
         resources: {}
         terminationMessagePath: /dev/termination-log
         terminationMessagePolicy: File
