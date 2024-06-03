@@ -181,42 +181,34 @@ public class NabuLogExporter implements LogExporter {
         }
 
         private static String parseLog(String line) {
-            // String[] parts = line.split(" ", 7);
-            String traceId = "bb2a18fe-f06e-4ab7-b531-24e1b9b6f303";
-            int nodeId = 3;
-            int threadId = 35;
-            String timestamp = "1717263618390";
-            String eventType = "BITSWAP_SERVER_START";
-            Instant now = Instant.now();
+            String[] parts = line.split("\t");
 
-            // Convert the Instant to a Unix timestamp (seconds since epoch)
-            long unixTimestamp = now.getEpochSecond();
-            String ts = String.valueOf(unixTimestamp);
+            if (parts.length == 7) {
+                return "{" +
+                        "\"traceId\":\"" + parts[0] + "\"," +
+                        "\"nodeId\":\"" + parts[1] + "\"," +
+                        "\"peerNodeId\":\"" + "{}" + "\"," +
+                        "\"threadId\":\"" + parts[2] + "\"," +
+                        "\"timestamp\":\"" + parts[3] + "\"," +
+                        "\"eventType\":\"" + parts[5] + "\"" +
+                        "}";
+            } else if (parts.length == 8) {
+                return "{" +
+                        "\"traceId\":\"" + parts[0] + "\"," +
+                        "\"nodeId\":\"" + parts[1] + "\"," +
+                        "\"peerNodeId\":\"" + parts[2] + "\"," +
+                        "\"threadId\":\"" + parts[3] + "\"," +
+                        "\"timestamp\":\"" + parts[4] + "\"," +
+                        "\"eventType\":\"" + parts[6] + "\"" +
+                        "}";
+            }
 
-            return "{" +
-                    "\"traceId\":\"" + traceId + "\"," +
-                    "\"nodeId\":\"" + nodeId + "\"," +
-                    "\"threadId\":\"" + threadId + "\"," +
-                    "\"timestamp\":\"" + ts + "\"," +
-                    "\"eventType\":\"" + eventType + "\"" +
-                    "}";
-            // 2024-06-01 17:40:18.390 BITSWAP_SERVER_START Want 3 hashes. Peer nodeId: 2
-
-            // TODO(@millerm): better parse
-            // return "{" +
-            // "\"traceId\":\"" + parts[0] + "\"," +
-            // "\"spanId\":\"" + parts[1] + "\"," +
-            // "\"nodeId\":\"" + parts[5] + "\"," +
-            // "\"threadId\":[]," +
-            // "\"timestamp\":\"" + "1716525641" + "\"," +
-            // "\"eventType\":\"" + "1716525642" + "\"," +
-            // "}";
-
+            return "{}";
         }
 
         private static void handleLog(String line) {
             HttpClient client = HttpClient.newHttpClient();
-            URI uri = URI.create("http://127.0.0.1:5200/v3/buildspan");
+            URI uri = URI.create("http://34.171.111.18:5200/v3/buildspan");
 
             String requestBody = parseLog(line);
             LOG.info("Sending " + requestBody);
