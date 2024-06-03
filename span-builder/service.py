@@ -98,7 +98,7 @@ def build_parent_child_spans(trace_id: str):
         if span.type == GET_PROVIDERS_CLIENT:
             maybe_child_index = find_span(span.peer_node_id, GET_PROVIDERS_SERVER)
 
-            if maybe_child_index > 0:
+            if maybe_child_index >= 0:
                 child = spans[maybe_child_index]
                 child.parent = span
                 span.children.append(child)
@@ -106,34 +106,34 @@ def build_parent_child_spans(trace_id: str):
         elif span.type == GET_PROVIDERS_SERVER:
             maybe_parent_index = find_span(span.peer_node_id, GET_PROVIDERS_CLIENT)
 
-            if maybe_parent_index > 0:
+            if maybe_parent_index >= 0:
                 parent = spans[maybe_child_index]
                 parent.children.append(span)
                 span.parent = parent
         elif span.type == BITSWAP_CLIENT:
             maybe_child_index = find_span(span.peer_node_id, BITSWAP_SERVER)
 
-            if maybe_child_index > 0:
+            if maybe_child_index >= 0:
                 child = spans[maybe_child_index]
                 child.parent = span
                 span.children.append(child)
         elif span.type == BITSWAP_SERVER:
             maybe_parent_index = find_span(span.peer_node_id, BITSWAP_CLIENT)
 
-            if maybe_parent_index > 0:
+            if maybe_parent_index >= 0:
                 parent = spans[maybe_parent_index]
                 parent.children.append(span)
                 span.parent = parent
             
             maybe_child_index = find_span(span.node_id, READ_FROM_FILE_STORE)
-            if maybe_child_index > 0:
+            if maybe_child_index >= 0:
                 child = spans[maybe_child_index]
                 child.parent = span
                 span.children.append(child)
         elif span.type == READ_FROM_FILE_STORE:
             maybe_parent_index = find_span(span.node_id, BITSWAP_SERVER)
 
-            if maybe_parent_index > 0:
+            if maybe_parent_index >= 0:
                 parent = spans[maybe_parent_index]
                 parent.children.append(span)
                 span.parent = parent
@@ -206,8 +206,14 @@ def build_span_v3():
                 if span_id in spans_sent:
                     continue
 
-                if span.type == "READ_FROM_FILE_STORE" and span.parent is None:
+                if span.type == READ_FROM_FILE_STORE and span.parent is None:
                     # READ_FROM_FILE_STORE must contain a parent
+                    continue
+                if span.type == GET_PROVIDERS_SERVER and span.parent is None:
+                    # GET_PROVIDERS_SERVER must contain a parent, which is the client
+                    continue
+                if span.type == BITSWAP_SERVER and span.parent is None:
+                    # BITSWAP_SERVER must contain a parent, which is the client
                     continue
 
                 payload = copy.deepcopy(STARTER_SPAN)
