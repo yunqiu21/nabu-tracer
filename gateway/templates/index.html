@@ -32,7 +32,7 @@
             margin-right: 15px;
         }
         #payload {
-            width: 100%;
+            width: calc(100% - 20px);
             height: 100px;
             border-radius: 5px;
             padding: 10px;
@@ -88,8 +88,7 @@
 <body>
     <h1>IPFS HTTP Gateway Server</h1>
     <div id="health-status">
-        <span>Nodes:</span>
-        <!-- TODO: Add a legend? -->
+        <span>IPFS Peers Status:</span>
         <div id="health-status-body" style="display: flex;"></div>
     </div>
     <textarea id="payload" placeholder="Enter payload for PUT request"></textarea>
@@ -140,20 +139,23 @@
                 } else {
                     let responseLineClass = "response-line";
                     const content = data.content.replace(/\n/g, '<br>').replace(/\r/g, '<br>');
+                    const contentSize = new TextEncoder().encode(data.content).length; // Calculate byte size of content
                     let metadata = `
                         <div class="metadata">
                             <span>Node: ${data.node}</span>
                             <span>Time Taken: ${data.time_taken}</span>`;
                     if (data.trace === "True") {
                         responseLineClass += " trace";
-                        metadata += `<span>Trace ID: ${data.trace_id}</span>`;
+                        metadata += `<span>Trace: <a href="http://34.67.248.229:16686/trace/${data.trace_id}">${data.trace_id}</a></span>`;
                     }
+                    metadata += `<span>Size: ${contentSize} bytes</span>`;
+                    metadata += `<span><a href="#" onclick="toggleContent(this); return false;">Expand Text</a></span>`;
                     metadata += `</div>`;
 
                     responseElement.innerHTML +=
                         `<div class="${responseLineClass}">
                             ${metadata}
-                            <div>${content}</div>
+                            <div class="full-content" style="display:none;">${content}</div>
                         </div>`;
                 }
             };
@@ -162,6 +164,18 @@
                 hideLoading();
                 eventSource.close();
             };
+        }
+
+        function toggleContent(link) {
+            const fullContent = link.parentElement.parentElement.nextElementSibling;
+            const expandLink = link;
+            if (fullContent.style.display === "none") {
+                fullContent.style.display = "block";
+                expandLink.innerText = "Collapse Text";
+            } else {
+                fullContent.style.display = "none";
+                expandLink.innerText = "Expand Text";
+            }
         }
 
         function sendPutRequest() {
@@ -195,8 +209,8 @@
             });
         }
 
-        // Periodically fetch the health status every 60 seconds
-        setInterval(fetchHealthStatus, 60000);
+        // Periodically fetch the health status every 30 seconds
+        setInterval(fetchHealthStatus, 30000);
 
         // Initial fetch of health status
         fetchHealthStatus();

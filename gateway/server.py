@@ -25,8 +25,8 @@ IPFS_URL = [
     "http://10.200.0.2:5000",  # nabu-9
 ]
 
-IPFS_PUT_NODE = 1  # Hardcoded for now to a responsive node
-IPFS_GET_NODE = 0  # Update with each GET request
+IPFS_NODE_IDX = 0
+SAMPLE_RATE = 10 # We will sample (1 / SAMPLE_RATE) of all CIDs for tracing
 
 # IPFS routes
 PUT_ROUTE = "/api/v0/block/put"
@@ -50,7 +50,7 @@ def get_ipfs_content():
         cid_records = db.collection("cid").stream()
         cid_list = [record.to_dict()["cid"] for record in cid_records]
         # Sample CIDs for tracing
-        nsamples = max(1, len(cid_list) // 10)
+        nsamples = max(1, (len(cid_list) + SAMPLE_RATE - 1) // SAMPLE_RATE)
         traced = random.sample(range(len(cid_list)), nsamples)
         start_time = time.time()
         with ThreadPoolExecutor() as executor:
@@ -77,8 +77,11 @@ def get_ipfs_content():
 # Forward PUT request to IPFS peer
 @app.route("/ipfs", methods=["PUT"])
 def put_ipfs_content():
-    # TODO: For PUT request, maybe can try all nodes until one succeeds?
-    url = IPFS_URL[IPFS_PUT_NODE] + PUT_ROUTE
+    node = get_next_healthy_node()
+    if node == -1:
+        return jsonify({"error": "No healthy IPFS node found"}), 500
+
+    url = IPFS_URL[node] + PUT_ROUTE
     payload = request.data.decode("utf-8")
 
     if not url:
@@ -99,12 +102,22 @@ def put_ipfs_content():
     except requests.RequestException as e:
         return jsonify({"error": str(e)}), 500
 
+def get_next_healthy_node():
+    global IPFS_NODE_IDX
+    next_node = (IPFS_NODE_IDX + 1) % len(IPFS_URL)
+    while node_health_status[next_node] != "Healthy":
+        if next_node == IPFS_NODE_IDX:
+            # No healthy node found
+            return -1
+        next_node = (next_node + 1) % len(IPFS_URL)
+    IPFS_NODE_IDX = next_node
+    return next_node
 
 def send_single_get_request(content, trace, start_time):
-    global IPFS_GET_NODE
-    node = IPFS_GET_NODE
-    # TODO: only choose from health nodes?
-    IPFS_GET_NODE = (IPFS_GET_NODE + 1) % len(IPFS_URL)
+    node = get_next_healthy_node()
+    if node == -1:
+        return 500, "No healthy IPFS node found", None, None, None, None
+
     url = IPFS_URL[node] + GET_ROUTE + f"?cid={content}"
 
     if trace:
@@ -159,7 +172,7 @@ def check_node_health():
             for future in as_completed(futures):
                 idx, status = future.result()
                 node_health_status[idx] = status
-        time.sleep(60)  # Check health every 60 seconds
+        time.sleep(30)  # Check health every 30 seconds
 
 # Start the health check in a separate thread
 threading.Thread(target=check_node_health, daemon=True).start()
