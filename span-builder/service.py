@@ -140,7 +140,7 @@ def build_parent_child_spans(trace_id: str):
                 parent.children.append(span)
                 span.parent = parent
 
-
+    logger.info(f"Processed trace: {trace_id}, len(spans): {len(spans)}")
     return spans
 
     
@@ -181,7 +181,8 @@ def build_span_v3():
     timestamp = int(content[RAW_LOG_TIME_STAMP_KEY])
     span_name, stage = _get_func_name_and_stage(content)
 
-    logger.info(f"Received trace event: {trace_id}, {thread_id}, {span_name}_{stage} {stage}")
+    human_timestamp = datetime.fromtimestamp(timestamp/1e9).strftime('%Y-%m-%d %H:%M:%S.%f')
+    logger.info(f"Received trace event from {request.remote_addr} at {human_timestamp}: {trace_id}, node {node_id}, {thread_id}, {span_name}_{stage} {stage}")
 
     if trace_id not in data_store:
         data_store[trace_id] = {"creation": datetime.now(), "data": {}}
