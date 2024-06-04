@@ -175,7 +175,7 @@ def build_span_v3():
     node_id = content[RAW_LOG_NODE_ID_KEY]
     peer_node_id = content[RAW_LOG_PEER_NODE_ID_KEY]
     thread_id = content[RAW_LOG_THREAD_ID_KEY]
-    timestamp = int(content[RAW_LOG_TIME_STAMP_KEY]) * 1e6
+    timestamp = int(content[RAW_LOG_TIME_STAMP_KEY])
     span_name, stage = _get_func_name_and_stage(content)
 
     logging.info(f"Received trace event: {trace_id}, {thread_id}, {span_name}_{stage} {stage}")
