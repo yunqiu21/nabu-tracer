@@ -5,6 +5,8 @@ import requests
 import copy
 from collections import defaultdict
 import logging
+logger = logging.getLogger(__name__)
+import json
 import hashlib
 from constants import *
 from datetime import datetime, timedelta
@@ -160,10 +162,11 @@ def print_spans(spans, prefix='', is_tail=True):
         
 
 def send_trace_to_jaeger(payload):
-    logging.debug("Sending payload to Jaeger: ", payload)
+    trace_id = payload["resourceSpans"][0]["scopeSpans"][0]["spans"][0][JAEGER_TRACE_ID_KEY]
+    logger.info(f"Sending payload to Jaeger, trace ID: {trace_id}")
     try:
         resp = requests.post(JAEGER_ENDPOINT, json=payload)
-        logging.debug(resp)
+        logger.info(resp)
     except:
         raise JaegerPostError("Failed to post to Jaeger endpoint")
 
@@ -178,7 +181,7 @@ def build_span_v3():
     timestamp = int(content[RAW_LOG_TIME_STAMP_KEY])
     span_name, stage = _get_func_name_and_stage(content)
 
-    logging.info(f"Received trace event: {trace_id}, {thread_id}, {span_name}_{stage} {stage}")
+    logger.info(f"Received trace event: {trace_id}, {thread_id}, {span_name}_{stage} {stage}")
 
     if trace_id not in data_store:
         data_store[trace_id] = {"creation": datetime.now(), "data": {}}
@@ -241,7 +244,7 @@ def build_span_v3():
 
                 # Keep the most recent 1000 sent spans to prevent memory leak
                 spans_sent.append(span_id)
-                if len(spans_sent) > 1000:
+                if len(spans_sent) > 10000:
                     spans_sent.pop(0)
 
             # Keep a trace for at most 2 minutes to prevent memory leak
@@ -265,4 +268,5 @@ def _get_func_name_and_stage(content):
 
 
 if __name__ == "__main__":
+    logging.basicConfig(filename='myapp.log', level=logging.INFO)
     app.run(host="0.0.0.0", port=5200)
