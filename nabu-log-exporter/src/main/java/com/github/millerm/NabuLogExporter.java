@@ -19,7 +19,6 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.time.Instant;
 
 import java.util.logging.Logger;
 import java.util.logging.Level;
@@ -27,26 +26,15 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class NabuLogExporter implements LogExporter {
-    private static final Logger LOG = Logger.getGlobal();
-
-    private static final int LOG_EXPORT_POLL_DELAY_MILLISECONDS = 1;
-
-    private static final int MAX_LOG_FILE_SIZE = 200 * 1024 * 1024;
-
-    private static final String LOG_FILE_IDENTIFIER = "trace.log";
-
-    private final Path logPathDir;
-
-    private Path stateDirPath;
-
-    private final ExecutorService executorService;
-
-    public String getLogFilePath() {
-        return logPathDir.toString();
+    public NabuLogExporter(String logPath) {
+        this.logPathDir = Path.of(logPath);
+        this.executorService = Executors.newCachedThreadPool();
     }
 
-    public String getstateDirPath() {
-        return stateDirPath.toString();
+    public NabuLogExporter() {
+        this.logPathDir = Path.of(System.getenv("NABU_TRACING_LOG_PATH"));
+        this.stateDirPath = Path.of(System.getenv("LOG_EXPORTER_STATE_PATH"));
+        this.executorService = Executors.newCachedThreadPool();
     }
 
     @Override
@@ -55,6 +43,15 @@ public class NabuLogExporter implements LogExporter {
 
         while (true) {
             processLogs();
+        }
+    }
+
+    public static void main(String[] args) {
+        try {
+            NabuLogExporter nabuLogExporter = new NabuLogExporter();
+            nabuLogExporter.run();
+        } catch (Exception e) {
+            LOG.log(Level.SEVERE, "SHUTDOWN", e);
         }
     }
 
@@ -160,10 +157,25 @@ public class NabuLogExporter implements LogExporter {
         handleNewLogFiles(logPathDir);
     }
 
+    /**
+     * Private Members
+     */
+
+    private static final Logger LOG = Logger.getGlobal();
+
+    private static final int LOG_EXPORT_POLL_DELAY_MILLISECONDS = 1;
+
+    private static final int MAX_LOG_FILE_SIZE = 200 * 1024 * 1024;
+
+    private static final String LOG_FILE_IDENTIFIER = "trace.log";
+
+    private final Path logPathDir;
+
+    private Path stateDirPath;
+
+    private final ExecutorService executorService;
+
     private static class LogTask implements Runnable {
-        private final Path filePath;
-        private final String stateDirPath;
-        private State state;
         long filePointer;
 
         public LogTask(Path filePath, Path stateDirPath) {
@@ -176,54 +188,6 @@ public class NabuLogExporter implements LogExporter {
             } catch (IOException e) {
                 LOG.severe("Error initiating state: " + e);
                 Thread.currentThread().interrupt();
-            }
-        }
-
-        private static String parseLog(String line) {
-            String[] parts = line.split("\t");
-
-            if (parts.length == 7) {
-                return "{" +
-                        "\"traceId\":\"" + parts[0] + "\"," +
-                        "\"nodeId\":\"" + parts[1] + "\"," +
-                        "\"peerNodeId\":\"" + "" + "\"," +
-                        "\"threadId\":\"" + parts[2] + "\"," +
-                        "\"timestamp\":\"" + parts[3] + "\"," +
-                        "\"eventType\":\"" + parts[5] + "\"" +
-                        "}";
-            } else if (parts.length == 8) {
-                return "{" +
-                        "\"traceId\":\"" + parts[0] + "\"," +
-                        "\"nodeId\":\"" + parts[1] + "\"," +
-                        "\"peerNodeId\":\"" + parts[2] + "\"," +
-                        "\"threadId\":\"" + parts[3] + "\"," +
-                        "\"timestamp\":\"" + parts[4] + "\"," +
-                        "\"eventType\":\"" + parts[6] + "\"" +
-                        "}";
-            }
-
-            return "{}";
-        }
-
-        private static void handleLog(String line) {
-            HttpClient client = HttpClient.newHttpClient();
-            URI uri = URI.create("http://34.171.111.18:5200/v3/buildspan");
-
-            String requestBody = parseLog(line);
-            LOG.info("Sending " + requestBody);
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(uri)
-                    .header("Content-Type", "application/json")
-                    .POST(BodyPublishers.ofString(requestBody))
-                    .build();
-
-            try {
-                HttpResponse<String> response = client.send(request, BodyHandlers.ofString());
-                LOG.info("Response status code: " + response.statusCode());
-                LOG.info("Response body: " + response.body());
-            } catch (Exception e) {
-                e.printStackTrace();
             }
         }
 
@@ -257,6 +221,58 @@ public class NabuLogExporter implements LogExporter {
             }
         }
 
+        private final Path filePath;
+        private final String stateDirPath;
+        private State state;
+
+        private static String parseLog(String line) {
+            String[] parts = line.split("\t");
+
+            if (parts.length == 7) {
+                return "{" +
+                        "\"traceId\":\"" + parts[0] + "\"," +
+                        "\"nodeId\":\"" + parts[1] + "\"," +
+                        "\"peerNodeId\":\"" + "" + "\"," +
+                        "\"threadId\":\"" + parts[2] + "\"," +
+                        "\"timestamp\":\"" + parts[3] + "\"," +
+                        "\"eventType\":\"" + parts[5] + "\"" +
+                        "}";
+            } else if (parts.length == 8) {
+                return "{" +
+                        "\"traceId\":\"" + parts[0] + "\"," +
+                        "\"nodeId\":\"" + parts[1] + "\"," +
+                        "\"peerNodeId\":\"" + parts[2] + "\"," +
+                        "\"threadId\":\"" + parts[3] + "\"," +
+                        "\"timestamp\":\"" + parts[4] + "\"," +
+                        "\"eventType\":\"" + parts[6] + "\"" +
+                        "}";
+            }
+
+            return "{}";
+        }
+
+        private static void handleLog(String line) {
+            HttpClient client = HttpClient.newHttpClient();
+            URI uri = URI.create(System.getenv("NABU_LOG_PROCESSOR_BACKEND_ENDPOINT"));
+
+            String requestBody = parseLog(line);
+            LOG.info("Sending " + requestBody);
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(uri)
+                    .header("Content-Type", "application/json")
+                    .POST(BodyPublishers.ofString(requestBody))
+                    .build();
+
+            try {
+                HttpResponse<String> response = client.send(request, BodyHandlers.ofString());
+                LOG.info("Response status code: " + response.statusCode());
+                LOG.info("Response body: " + response.body());
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+
         private void saveState(long position) {
             state.saveState(position);
         }
@@ -267,23 +283,4 @@ public class NabuLogExporter implements LogExporter {
 
     }
 
-    public NabuLogExporter(String logPath) {
-        this.logPathDir = Path.of(logPath);
-        this.executorService = Executors.newCachedThreadPool();
-    }
-
-    public NabuLogExporter() {
-        this.logPathDir = Path.of(System.getenv("NABU_TRACING_LOG_PATH"));
-        this.stateDirPath = Path.of(System.getenv("LOG_EXPORTER_STATE_PATH"));
-        this.executorService = Executors.newCachedThreadPool();
-    }
-
-    public static void main(String[] args) {
-        try {
-            NabuLogExporter nabuLogExporter = new NabuLogExporter();
-            nabuLogExporter.run();
-        } catch (Exception e) {
-            LOG.log(Level.SEVERE, "SHUTDOWN", e);
-        }
-    }
 }
