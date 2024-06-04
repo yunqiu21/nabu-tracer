@@ -186,7 +186,7 @@ public class NabuLogExporter implements LogExporter {
                 return "{" +
                         "\"traceId\":\"" + parts[0] + "\"," +
                         "\"nodeId\":\"" + parts[1] + "\"," +
-                        "\"peerNodeId\":\"" + "{}" + "\"," +
+                        "\"peerNodeId\":\"" + "" + "\"," +
                         "\"threadId\":\"" + parts[2] + "\"," +
                         "\"timestamp\":\"" + parts[3] + "\"," +
                         "\"eventType\":\"" + parts[5] + "\"" +
