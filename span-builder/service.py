@@ -5,11 +5,21 @@ import requests
 import copy
 from collections import defaultdict
 import logging
-logger = logging.getLogger(__name__)
-import json
+from logging.handlers import TimedRotatingFileHandler
 import hashlib
 from constants import *
 from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+handler = TimedRotatingFileHandler(
+    'app.log',
+    when='H',
+    interval=4,
+    backupCount=7
+)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger.addHandler(handler)
 
 app = Flask(__name__)
 
@@ -21,17 +31,6 @@ spans_sent = []
 class JaegerPostError(Exception):
     pass
 
-
-class LogStorageError(Exception):
-    pass
-
-
-class TraceConstructionError(Exception):
-    pass
-
-
-class AddLineageError(Exception):
-    pass
 
 def is_trace_complete_v2(trace_id: str) -> bool:
     trace = data_store[trace_id]
@@ -140,7 +139,7 @@ def build_parent_child_spans(trace_id: str):
                 parent.children.append(span)
                 span.parent = parent
 
-    logger.info(f"Processed trace: {trace_id}, len(spans): {len(spans)}")
+    logger.info(f"Processed trace: {trace_id}. Number of spans: {len(spans)}")
     return spans
 
     
@@ -182,7 +181,7 @@ def build_span_v3():
     span_name, stage = _get_func_name_and_stage(content)
 
     human_timestamp = datetime.fromtimestamp(timestamp/1e9).strftime('%Y-%m-%d %H:%M:%S.%f')
-    logger.info(f"Received trace event from {request.remote_addr} at {human_timestamp}: {trace_id}, node {node_id}, {thread_id}, {span_name}_{stage} {stage}")
+    logger.info(f"Received trace event from {request.remote_addr} at {human_timestamp}: {trace_id}, node {node_id}, thread {thread_id}, {span_name}_{stage} {stage}")
 
     if trace_id not in data_store:
         data_store[trace_id] = {"creation": datetime.now(), "data": {}}
@@ -269,5 +268,4 @@ def _get_func_name_and_stage(content):
 
 
 if __name__ == "__main__":
-    logging.basicConfig(filename='myapp.log', level=logging.INFO)
     app.run(host="0.0.0.0", port=5200)
