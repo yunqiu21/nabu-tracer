@@ -27,7 +27,7 @@ IPFS_URL = [
 
 IPFS_NODE_IDX = 0
 SAMPLE_RATE = 10 # We will sample (1 / SAMPLE_RATE) of all CIDs for tracing
-TIMEOUT = 15
+TIMEOUT_IN_SEC = 15
 
 # IPFS routes
 PUT_ROUTE = "/api/v0/block/put"
@@ -62,7 +62,9 @@ def get_ipfs_content():
                 for i, cid in enumerate(cid_list)
             }
             try:
-                for future in as_completed(future_to_cid, timeout=TIMEOUT):
+                healthy_node_count = sum(1 for status in node_health_status.values() if status == "Healthy")
+                request_timeout = ((len(cid_list) + healthy_node_count - 1) // healthy_node_count) * TIMEOUT_IN_SEC
+                for future in as_completed(future_to_cid, timeout=request_timeout):
                     cid = future_to_cid[future]
                     try:
                         status, response, node, trace, time_taken, trace_id = future.result()
@@ -204,11 +206,11 @@ def check_node_health():
 
     with ThreadPoolExecutor() as executor:
         while True:
-            print("Sending health check requests")
+            print(f"[{time.ctime()}] Sending health check requests")
             futures = {executor.submit(check_health, url, idx): idx for idx, url in enumerate(IPFS_URL)}
             replied_idx = []
             try:
-                for future in as_completed(futures, timeout=TIMEOUT):
+                for future in as_completed(futures, timeout=TIMEOUT_IN_SEC):
                     idx, status = future.result()
                     node_health_status[idx] = status
                     replied_idx.append(idx)
