@@ -54,7 +54,6 @@ class Span:
         self.start_time = start_time * 1_000_000
         self.end_time = end_time * 1_000_000
         self.parent_id = parent_id
-        self.children = children if children is not None else []
 
 
 def construct_span_id_from_span(trace_id, node_id, peer_node_id, span_name):
@@ -161,9 +160,6 @@ def print_spans(spans, prefix='', is_tail=True):
         print(f"{prefix}{child_prefix}Event: {span.type}")
         print(f"{prefix}{child_prefix}Start: {span.start_time}")
         print(f"{prefix}{child_prefix}End: {span.end_time}")
-
-        if span.children:
-            new_prefix = prefix + child_prefix
 
 
 def send_trace_to_jaeger(payload):
