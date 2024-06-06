@@ -27,9 +27,17 @@
             margin-bottom: 8px;
             display: flex;
             flex-wrap: wrap;
+            justify-content: space-between;
         }
-        .metadata span {
+        .metadata .left-align {
+            display: flex;
+            flex-wrap: wrap;
+        }
+        .metadata .left-align span {
             margin-right: 15px;
+        }
+        .metadata .right-align {
+            margin-left: auto;
         }
         #payload {
             width: calc(100% - 20px);
@@ -140,16 +148,26 @@
                     let responseLineClass = "response-line";
                     const content = data.content.replace(/\n/g, '<br>').replace(/\r/g, '<br>');
                     const contentSize = new TextEncoder().encode(data.content).length; // Calculate byte size of content
-                    let metadata = `
-                        <div class="metadata">
-                            <span>Node: ${data.node}</span>
-                            <span>Time Taken: ${data.time_taken}</span>`;
+                    let metadata = `<div class="metadata">`;
                     if (data.trace === "True") {
                         responseLineClass += " trace";
-                        metadata += `<span>Trace: <a href="http://34.67.248.229:16686/trace/${data.trace_id}">${data.trace_id}</a></span>`;
+                        metadata += `
+                            <div class="left-align">
+                                <span>Node: ${data.node}</span>
+                                <span>Time Taken: ${data.time_taken}</span>
+                                <span>Size: ${contentSize} bytes</span>
+                                <span><a href="#" onclick="toggleContent(this); return false;">Expand Text</a></span>
+                            </div>
+                            <span class="right-align trace">Trace: <a href="http://34.67.248.229:16686/trace/${data.trace_id}" target="_blank">${data.trace_id}</a></span>`;
+                    } else {
+                        metadata += `
+                            <div class="left-align">
+                                <span>Node: ${data.node}</span>
+                                <span>Time Taken: ${data.time_taken}</span>
+                                <span>Size: ${contentSize} bytes</span>
+                                <span><a href="#" onclick="toggleContent(this); return false;">Expand Text</a></span>
+                            </div>`;
                     }
-                    metadata += `<span>Size: ${contentSize} bytes</span>`;
-                    metadata += `<span><a href="#" onclick="toggleContent(this); return false;">Expand Text</a></span>`;
                     metadata += `</div>`;
 
                     responseElement.innerHTML +=
@@ -167,7 +185,7 @@
         }
 
         function toggleContent(link) {
-            const fullContent = link.parentElement.parentElement.nextElementSibling;
+            const fullContent = link.parentElement.parentElement.parentElement.nextElementSibling;
             const expandLink = link;
             if (fullContent.style.display === "none") {
                 fullContent.style.display = "block";

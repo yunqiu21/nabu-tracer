@@ -27,6 +27,7 @@ IPFS_URL = [
 
 IPFS_NODE_IDX = 0
 SAMPLE_RATE = 10 # We will sample (1 / SAMPLE_RATE) of all CIDs for tracing
+TIMEOUT_IN_SEC = 15
 
 # IPFS routes
 PUT_ROUTE = "/api/v0/block/put"
@@ -49,8 +50,10 @@ def get_ipfs_content():
         # Retrieve CIDs from Firestore
         cid_records = db.collection("cid").stream()
         cid_list = [record.to_dict()["cid"] for record in cid_records]
+        increment_counter("total_requests", len(cid_list))
         # Sample CIDs for tracing
         nsamples = max(1, (len(cid_list) + SAMPLE_RATE - 1) // SAMPLE_RATE)
+        increment_counter("trace_requests", nsamples)
         traced = random.sample(range(len(cid_list)), nsamples)
         start_time = time.time()
         with ThreadPoolExecutor() as executor:
@@ -58,18 +61,24 @@ def get_ipfs_content():
                 executor.submit(send_single_get_request, cid, i in traced, start_time): cid
                 for i, cid in enumerate(cid_list)
             }
-            for future in as_completed(future_to_cid):
-                cid = future_to_cid[future]
-                try:
-                    status, response, node, trace, time_taken, trace_id = future.result()
-                    if status != 200:
-                        yield f'data: {{"error": "{response}", "node": "nabu-{node}", "trace": "{trace}", "trace_id": "{trace_id}", "time_taken": "{time_taken:.2f}s"}}\n\n'
-                    else:
-                        # Escape newlines
-                        escaped_response = response.replace("\n", "\\n").replace("\r", "\\r")
-                        yield f'data: {{"content": "{escaped_response}", "node": "nabu-{node}", "trace": "{trace}", "trace_id": "{trace_id}", "time_taken": "{time_taken:.2f}s"}}\n\n'
-                except Exception as e:
-                    yield f'data: {{"error": "{str(e)}", "node": "nabu-{node}", "trace": "{trace}", "trace_id": "N/A", "time_taken": "N/A"}}\n\n'
+            try:
+                healthy_node_count = sum(1 for status in node_health_status.values() if status == "Healthy")
+                request_timeout = ((len(cid_list) + healthy_node_count - 1) // healthy_node_count) * TIMEOUT_IN_SEC
+                for future in as_completed(future_to_cid, timeout=request_timeout):
+                    cid = future_to_cid[future]
+                    try:
+                        status, response, node, trace, time_taken, trace_id = future.result()
+                        if status != 200:
+                            yield f'data: {{"error": "{response}", "node": "nabu-{node}", "trace": "{trace}", "trace_id": "{trace_id}", "time_taken": "{time_taken:.2f}s"}}\n\n'
+                        else:
+                            # Escape newlines
+                            escaped_response = response.replace("\n", "\\n").replace("\r", "\\r").replace("\"", "\\\"")
+                            yield f'data: {{"content": "{escaped_response}", "node": "nabu-{node}", "trace": "{trace}", "trace_id": "{trace_id}", "time_taken": "{time_taken:.2f}s"}}\n\n'
+                    except Exception as e:
+                        yield f'data: {{"error": "{str(e)}", "node": "nabu-{node}", "trace": "{trace}", "trace_id": "N/A", "time_taken": "N/A"}}\n\n'
+            except Exception as e:
+                # TimeoutError
+                yield f'data: {{"error": "{str(e)}", "node": "N/A", "{False}": "N/A", "trace_id": "N/A", "time_taken": "N/A"}}\n\n'
 
     return Response(generate(), mimetype="text/event-stream")
 
@@ -113,6 +122,19 @@ def get_next_healthy_node():
     IPFS_NODE_IDX = next_node
     return next_node
 
+
+def increment_counter(counter_name, amount):
+    counter_ref = db.collection("counters").document(counter_name)
+    try:
+        counter = counter_ref.get()
+        if counter.exists:
+            counter_ref.update({"count": firestore.Increment(amount)})
+        else:
+            counter_ref.set({"count": amount})
+    except Exception as e:
+        print(f"Error updating counter {counter_name}: {e}")
+
+
 def send_single_get_request(content, trace, start_time):
     node = get_next_healthy_node()
     if node == -1:
@@ -122,7 +144,6 @@ def send_single_get_request(content, trace, start_time):
 
     if trace:
         url += "&trace=1"
-        # TODO: mark the CID as sampled in datastore
 
     # debug
     print(url)
@@ -149,6 +170,24 @@ def send_single_get_request(content, trace, start_time):
             trace_id,
         )
 
+# Clear the cid collection
+@app.route("/clear", methods=["GET"])
+def clear_cid_collection():
+    try:
+        # Retrieve all documents in the cid collection
+        cid_records = db.collection("cid").stream()
+
+        # Batch delete all documents
+        batch = db.batch()
+        for record in cid_records:
+            batch.delete(record.reference)
+        batch.commit()
+
+        return "Collection cleared successfully", 200
+
+    except Exception as e:
+        return str(e), 500
+
 # Check the health of IPFS nodes
 @app.route("/ipfs/health", methods=["GET"])
 def get_ipfs_health():
@@ -158,7 +197,6 @@ def get_ipfs_health():
 def check_node_health():
     def check_health(url, idx):
         health_url = url + HEALTH_ROUTE
-        print(health_url)
         try:
             response = requests.get(health_url)
             response.raise_for_status()
@@ -166,16 +204,25 @@ def check_node_health():
         except requests.RequestException:
             return idx, "Unhealthy"
 
-    while True:
-        with ThreadPoolExecutor() as executor:
+    with ThreadPoolExecutor() as executor:
+        while True:
+            print(f"[{time.ctime()}] Sending health check requests")
             futures = {executor.submit(check_health, url, idx): idx for idx, url in enumerate(IPFS_URL)}
-            for future in as_completed(futures):
-                idx, status = future.result()
-                node_health_status[idx] = status
-        time.sleep(30)  # Check health every 30 seconds
+            replied_idx = []
+            try:
+                for future in as_completed(futures, timeout=TIMEOUT_IN_SEC):
+                    idx, status = future.result()
+                    node_health_status[idx] = status
+                    replied_idx.append(idx)
+            except Exception as e:
+                # TimeoutError
+                for idx, _ in enumerate(IPFS_URL):
+                    if idx not in replied_idx:
+                        node_health_status[idx] = "Unhealthy"
+            time.sleep(15)  # Wait 15 more seconds before sending the next round of health check
 
 # Start the health check in a separate thread
 threading.Thread(target=check_node_health, daemon=True).start()
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=80)
+    app.run(host="0.0.0.0", port=80)
