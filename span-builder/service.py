@@ -46,14 +46,14 @@ def is_trace_complete_v2(trace_id: str) -> bool:
 
 
 class Span:
-    def __init__(self, span_id: str ,node_id: str, type: str, start_time: int, end_time: int, peer_node_id: Optional[str] = None, parent: Optional['Span'] = None, children: Optional[List['Span']] = None):
+    def __init__(self, span_id: str ,node_id: str, type: str, start_time: int, end_time: int, peer_node_id: str, parent_id: str):
         self.span_id = ""
         self.node_id = node_id
         self.peer_node_id = peer_node_id
         self.type = type
         self.start_time = start_time * 1_000_000
         self.end_time = end_time * 1_000_000
-        self.parent = parent
+        self.parent_id = parent_id
         self.children = children if children is not None else []
 
 
@@ -92,7 +92,7 @@ def build_parent_child_spans(trace_id: str):
             start_time=start,
             end_time=end,
             peer_node_id=peer_node_id,
-            parent=None,
+            parent_id=None,
         )
 
         spans.append(span)
@@ -111,8 +111,8 @@ def build_parent_child_spans(trace_id: str):
             maybe_parent_index = find_span(span.peer_node_id, GET_PROVIDERS_CLIENT)
 
             if maybe_parent_index != -1:
-                parent = spans[maybe_parent_index].span_id
-                span.parent = parent
+                parent_id = spans[maybe_parent_index].span_id
+                span.parent_id = parent_id
             else:
                 return None
         elif span.type == BITSWAP_CLIENT:
@@ -124,8 +124,8 @@ def build_parent_child_spans(trace_id: str):
             maybe_parent_index = find_span(span.peer_node_id, BITSWAP_CLIENT)
 
             if maybe_parent_index != -1:
-                parent = spans[maybe_parent_index].span_id
-                span.parent = parent
+                parent_id = spans[maybe_parent_index].span_id
+                span.parent_id = parent_id
             else:
                 return None
 
@@ -137,8 +137,8 @@ def build_parent_child_spans(trace_id: str):
             maybe_parent_index = find_span(span.node_id, BITSWAP_SERVER)
 
             if maybe_parent_index >= 0:
-                parent = spans[maybe_parent_index].span_id
-                span.parent = parent
+                parent_id = spans[maybe_parent_index].span_id
+                span.parent_id = parent_id
             else:
                 return None
 
@@ -214,24 +214,12 @@ def build_span_v3():
                 if span_id in spans_sent:
                     continue
 
-                """
-                if span.type == READ_FROM_FILE_STORE and span.parent is None:
-                    # READ_FROM_FILE_STORE must contain a parent
-                    continue
-                if span.type == GET_PROVIDERS_SERVER and span.parent is None:
-                    # GET_PROVIDERS_SERVER must contain a parent, which is the client
-                    continue
-                if span.type == BITSWAP_SERVER and span.parent is None:
-                    # BITSWAP_SERVER must contain a parent, which is the client
-                    continue
-                """
-
                 payload = copy.deepcopy(STARTER_SPAN)
 
                 span_payload = {
                     JAEGER_TRACE_ID_KEY: trace_id,
                     JAEGER_SPAN_ID_KEY: span_id,
-                    JAEGER_PARENT_SPAN_ID_KEY: span.parent,
+                    JAEGER_PARENT_SPAN_ID_KEY: span.parent_id,
                     JAEGER_START_TIME_NANO_KEY: span.start_time,
                     JAEGER_END_TIME_NANO_KEY: span.end_time,
                     JAEGER_SPAN_OPERATION_NAME_KEY: f"{span.type}_{span.node_id}",
