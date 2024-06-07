@@ -29,10 +29,6 @@ IPFS_NODE_IDX = 0
 SAMPLE_RATE = 10 # We will sample (1 / SAMPLE_RATE) of all CIDs for tracing
 TIMEOUT_IN_SEC = 15
 
-# GET request timer
-TIMER_STARTED = False
-START_TIME = None
-
 # Traced requests counter
 REQUESTS_TRACED = 0
 
@@ -54,7 +50,7 @@ def index():
 @app.route("/ipfs", methods=["GET"])
 def get_ipfs_content():
     def generate():
-        global REQUESTS_TRACED, TIMER_STARTED, START_TIME
+        global REQUESTS_TRACED
         # Retrieve CIDs from Firestore
         cid_records = db.collection("cid").stream()
         cid_list = [record.to_dict()["cid"] for record in cid_records]
@@ -62,8 +58,6 @@ def get_ipfs_content():
         # Sample CIDs for tracing
         nsamples = max(1, (len(cid_list) + SAMPLE_RATE - 1) // SAMPLE_RATE)
         traced = random.sample(range(len(cid_list)), nsamples)
-        TIMER_STARTED = False
-        START_TIME = None
         with ThreadPoolExecutor(max_workers=512) as executor:
             future_to_cid = {
                 executor.submit(send_single_get_request, cid, i in traced): cid
@@ -147,8 +141,6 @@ def increment_counter(counter_name, amount):
 
 
 def send_single_get_request(content, trace):
-    global TIMER_STARTED, START_TIME
-
     node = get_next_healthy_node()
     if node == -1:
         return 500, "No healthy IPFS node found", None, None, None, None
@@ -164,22 +156,19 @@ def send_single_get_request(content, trace):
     if not url:
         return 400, "URL is required", node, trace, None, None
 
-    # Start timer when the first get request is sent to IPFS node
-    if not TIMER_STARTED:
-        START_TIME = time.time()
-        TIMER_STARTED = True
+    start_time = time.time()
 
     try:
         response = requests.get(url)
         response.raise_for_status()
-        time_taken = time.time() - START_TIME
+        time_taken = time.time() - start_time
         trace_id = response.headers.get("Trace-id", "N/A")
         if trace_id == "N/A":
             trace = False
         return response.status_code, response.text, node, trace, time_taken, trace_id
 
     except requests.RequestException as e:
-        time_taken = time.time() - START_TIME
+        time_taken = time.time() - start_time
         trace_id = e.response.headers.get("Trace-id", "N/A") if e.response else "N/A"
         if trace_id == "N/A":
             trace = False
