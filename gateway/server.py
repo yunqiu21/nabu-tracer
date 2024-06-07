@@ -29,6 +29,13 @@ IPFS_NODE_IDX = 0
 SAMPLE_RATE = 10 # We will sample (1 / SAMPLE_RATE) of all CIDs for tracing
 TIMEOUT_IN_SEC = 15
 
+# GET request timer
+TIMER_STARTED = False
+START_TIME = None
+
+# Traced requests counter
+REQUESTS_TRACED = 0
+
 # IPFS routes
 PUT_ROUTE = "/api/v0/block/put"
 GET_ROUTE = "/api/v0/block/get"
@@ -47,18 +54,19 @@ def index():
 @app.route("/ipfs", methods=["GET"])
 def get_ipfs_content():
     def generate():
+        global REQUESTS_TRACED, TIMER_STARTED, START_TIME
         # Retrieve CIDs from Firestore
         cid_records = db.collection("cid").stream()
         cid_list = [record.to_dict()["cid"] for record in cid_records]
         increment_counter("total_requests", len(cid_list))
         # Sample CIDs for tracing
         nsamples = max(1, (len(cid_list) + SAMPLE_RATE - 1) // SAMPLE_RATE)
-        increment_counter("trace_requests", nsamples)
         traced = random.sample(range(len(cid_list)), nsamples)
-        start_time = time.time()
-        with ThreadPoolExecutor() as executor:
+        TIMER_STARTED = False
+        START_TIME = None
+        with ThreadPoolExecutor(max_workers=512) as executor:
             future_to_cid = {
-                executor.submit(send_single_get_request, cid, i in traced, start_time): cid
+                executor.submit(send_single_get_request, cid, i in traced): cid
                 for i, cid in enumerate(cid_list)
             }
             try:
@@ -68,6 +76,8 @@ def get_ipfs_content():
                     cid = future_to_cid[future]
                     try:
                         status, response, node, trace, time_taken, trace_id = future.result()
+                        if trace:
+                            REQUESTS_TRACED += 1
                         if status != 200:
                             yield f'data: {{"error": "{response}", "node": "nabu-{node}", "trace": "{trace}", "trace_id": "{trace_id}", "time_taken": "{time_taken:.2f}s"}}\n\n'
                         else:
@@ -111,6 +121,7 @@ def put_ipfs_content():
     except requests.RequestException as e:
         return jsonify({"error": str(e)}), 500
 
+
 def get_next_healthy_node():
     global IPFS_NODE_IDX
     next_node = (IPFS_NODE_IDX + 1) % len(IPFS_URL)
@@ -135,7 +146,9 @@ def increment_counter(counter_name, amount):
         print(f"Error updating counter {counter_name}: {e}")
 
 
-def send_single_get_request(content, trace, start_time):
+def send_single_get_request(content, trace):
+    global TIMER_STARTED, START_TIME
+
     node = get_next_healthy_node()
     if node == -1:
         return 500, "No healthy IPFS node found", None, None, None, None
@@ -151,16 +164,25 @@ def send_single_get_request(content, trace, start_time):
     if not url:
         return 400, "URL is required", node, trace, None, None
 
+    # Start timer when the first get request is sent to IPFS node
+    if not TIMER_STARTED:
+        START_TIME = time.time()
+        TIMER_STARTED = True
+
     try:
         response = requests.get(url)
         response.raise_for_status()
-        time_taken = time.time() - start_time
+        time_taken = time.time() - START_TIME
         trace_id = response.headers.get("Trace-id", "N/A")
+        if trace_id == "N/A":
+            trace = False
         return response.status_code, response.text, node, trace, time_taken, trace_id
 
     except requests.RequestException as e:
-        time_taken = time.time() - start_time
+        time_taken = time.time() - START_TIME
         trace_id = e.response.headers.get("Trace-id", "N/A") if e.response else "N/A"
+        if trace_id == "N/A":
+            trace = False
         return (
             e.response.status_code if e.response else 500,
             str(e),
@@ -204,7 +226,7 @@ def check_node_health():
         except requests.RequestException:
             return idx, "Unhealthy"
 
-    with ThreadPoolExecutor() as executor:
+    with ThreadPoolExecutor(max_workers=512) as executor:
         while True:
             print(f"[{time.ctime()}] Sending health check requests")
             futures = {executor.submit(check_health, url, idx): idx for idx, url in enumerate(IPFS_URL)}
@@ -223,6 +245,16 @@ def check_node_health():
 
 # Start the health check in a separate thread
 threading.Thread(target=check_node_health, daemon=True).start()
+
+def increment_requests_traced():
+    global REQUESTS_TRACED
+    while True:
+        increment_counter("traced_requests", REQUESTS_TRACED)
+        REQUESTS_TRACED = 0
+        time.sleep(15)
+
+# Start the traced requests counter in a separate thread
+threading.Thread(target=increment_requests_traced, daemon=True).start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=80)
