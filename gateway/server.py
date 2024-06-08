@@ -156,19 +156,17 @@ def send_single_get_request(content, trace):
     if not url:
         return 400, "URL is required", node, trace, None, None
 
-    start_time = time.time()
-
     try:
         response = requests.get(url)
         response.raise_for_status()
-        time_taken = time.time() - start_time
+        time_taken = response.elapsed.total_seconds()
         trace_id = response.headers.get("Trace-id", "N/A")
         if trace_id == "N/A":
             trace = False
         return response.status_code, response.text, node, trace, time_taken, trace_id
 
     except requests.RequestException as e:
-        time_taken = time.time() - start_time
+        time_taken = response.elapsed.total_seconds()
         trace_id = e.response.headers.get("Trace-id", "N/A") if e.response else "N/A"
         if trace_id == "N/A":
             trace = False
